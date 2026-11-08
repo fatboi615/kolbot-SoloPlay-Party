@@ -280,6 +280,24 @@
     // Make sure it's a valid item
     if (!item) return false;
 
+    // Guards for SCL-SORC 2026-11-04 D2BS log: this.buffer[x] undefined at ~line 322.
+    // Buffer is buffer[row/height][col/width] (see Mark: buffer[y][x]). FindSpot's inner
+    // loop indexes rows as `x` with endY = height - (sizey - 1). When sizey/sizex are 0,
+    // NaN, missing, or larger than the container, endY/endX become <= -1, height+1, or
+    // NaN; the `x !== endY` loop never terminates (or walks one past buffer.length) and
+    // this.buffer[x] is undefined. Same for width/sizex. Reject cannot-fit early.
+    let sx = item.sizex;
+    let sy = item.sizey;
+
+    if (typeof sx !== "number" || typeof sy !== "number"
+      || !isFinite(sx) || !isFinite(sy) || sx < 1 || sy < 1) {
+      return false;
+    }
+
+    if (sx > this.width || sy > this.height) {
+      return false;
+    }
+
     /** @todo review this to see why it sometimes fails when there is actually enough room */
 
     let x, y, nx, ny, makeSpot;
@@ -287,12 +305,18 @@
 
     let startX = 0;
     let startY = 0;
-    let endX = this.width - (item.sizex - 1);
-    let endY = this.height - (item.sizey - 1);
+    let endX = this.width - (sx - 1);
+    let endY = this.height - (sy - 1);
+
+    // Forward-direction range empty/invalid → item cannot fit
+    if (endX < 1 || endY < 1) {
+      return false;
+    }
 
     Storage.Reload();
 
-    if (item.sizex && item.sizey && item.gid === undefined) {
+    // Fake-item mocking only after size validation (gid === undefined with sizex/sizey)
+    if (sx && sy && item.gid === undefined) {
       // fake item we are checking if we can fit a certain sized item so mock some props to it
       item.gid = -1;
       item.classid = -1;
@@ -314,10 +338,20 @@
       yDir = -1;
     }
 
+    // After reverse adjust: startX is used as buffer column (`y`), startY as buffer row (`x`)
+    if (startX < 0 || startX >= this.width || startY < 0 || startY >= this.height) {
+      return false;
+    }
+
     //Loop buffer looking for spot to place item.
     for (y = startX; y !== endX; y += xDir) {
       Loop:
       for (x = startY; x !== endY; x += yDir) {
+        // Defensive: skip OOB rows (never throw on this.buffer[x] undefined)
+        if (!this.buffer[x]) {
+          continue;
+        }
+
       //Check if there is something in this spot.
         if (this.buffer[x][y] > 0) {
           // TODO: add makespot logic here. priorityClassIds should only be used when sorting -- in town, where it's safe!
@@ -355,6 +389,10 @@
         //Loop the item size to make sure we can fit it.
         for (nx = 0; nx < item.sizey; nx += 1) {
           for (ny = 0; ny < item.sizex; ny += 1) {
+            if (!this.buffer[x + nx]) {
+              continue Loop;
+            }
+
             if (this.buffer[x + nx][y + ny]) {
               // ignore same gid
               if (item.gid !== this.itemList[this.buffer[x + nx][y + ny] - 1].gid) {
@@ -398,6 +436,14 @@
       return false; // only continue if the item is in the priority sort list
     }
 
+    // Same size/OOB hardening as FindSpot (MakeSpot indexes this.buffer[x][y])
+    if (typeof item.sizex !== "number" || typeof item.sizey !== "number"
+      || !isFinite(item.sizex) || !isFinite(item.sizey)
+      || item.sizex < 1 || item.sizey < 1
+      || item.sizex > this.width || item.sizey > this.height) {
+      return false;
+    }
+
     // Make sure the item could even fit at the desired location
     if (!location //|| !(location.x >= 0) || !(location.y >= 0)
       || ((location.y + (item.sizex - 1)) > (this.width - 1))
@@ -418,6 +464,10 @@
 
     // Collect a list of all the items in the way of using this position
     for (x = location.x; x <= endx; x += 1) { // item height
+      if (!this.buffer[x]) {
+        continue; // defensive OOB row skip
+      }
+
       for (y = location.y; y <= endy; y += 1) { // item width
         if ( this.buffer[x][y] === 0 ) {
           continue; // nothing to move from this spot

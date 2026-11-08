@@ -31,6 +31,28 @@ Pickit.minItemKeepGoldValue = function () {
   }
 };
 
+
+/**
+ * Sell value + per-square for LowGold trash picks.
+ * Returns null when unit lacks getItemCost or finite positive sizex/sizey
+ * (Town.prepareForGemShrine GemUnit is a Partial ItemUnit stub — no getItemCost).
+ * @param {ItemUnit} unit
+ * @returns {{value: number, perSquare: number}|null}
+ */
+Pickit._itemSellValuePerSquare = function (unit) {
+  if (!unit || typeof unit.getItemCost !== "function") return null;
+  const sx = unit.sizex;
+  const sy = unit.sizey;
+  if (typeof sx !== "number" || typeof sy !== "number"
+    || !isFinite(sx) || !isFinite(sy) || sx < 1 || sy < 1) {
+    return null;
+  }
+  const itemValue = unit.getItemCost(sdk.items.cost.ToSell);
+  if (typeof itemValue !== "number" || !isFinite(itemValue)) return null;
+  return { value: itemValue, perSquare: itemValue / (sx * sy) };
+};
+
+
 /**
  * @constant
  * This value never changes throughout the game
@@ -140,8 +162,12 @@ Pickit.checkItem = function (unit) {
     // Gold doesn't take up room, just pick it up
     if (unit.classid === sdk.items.Gold) return resultObj(Pickit.Result.TRASH);
 
-    const itemValue = unit.getItemCost(sdk.items.cost.ToSell);
-    const itemValuePerSquare = itemValue / (unit.sizex * unit.sizey);
+    // Skip LowGold trash when cost/size unavailable (e.g. GemUnit from prepareForGemShrine)
+    const sell = Pickit._itemSellValuePerSquare(unit);
+    if (!sell) return rval;
+
+    const itemValue = sell.value;
+    const itemValuePerSquare = sell.perSquare;
 
     if (itemValuePerSquare >= 2000) {
       // If total gold is less than 500k pick up anything worth 2k gold per square to sell in town.

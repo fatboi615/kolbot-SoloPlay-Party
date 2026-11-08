@@ -3,6 +3,10 @@
 *  @author      theBGuy
 *  @credit      jaenster
 *  @desc        Attack.js fixes and related functions
+*  @patch       D2BotNG local — Attack.killTarget ignores skipCheck (SkipEnchant/
+*               SkipAura/SkipImmune) for explicit named kills; LE SkipEnchant was
+*               aborting Rakanishu when lightRes < 75 (SCL-SORC Nov 4–5). Adds
+*               re-engage + "(no attacks landed)" errorInfo. Backup before overwrite.
 *
 */
 
@@ -359,64 +363,137 @@ Attack.killTarget = function (name) {
   let [retry, attackCount] = [0, 0];
   let lastLoc = { x: me.x, y: me.y };
   let tick = getTickCount();
+  const maxEngage = 3;
 
   try {
     console.log("ÿc7Kill ÿc0:: " + who);
     // disable opening chests while killing unit
     Misc.openChestsEnabled = false;
 
-    while (attackCount < Config.MaxAttackCount && target.attackable && !this.skipCheck(target)) {
-      // Check if unit got invalidated, happens if necro raises a skeleton from the boss's corpse.
-      if (!target || !copyUnit(target).x) {
-        target = Game.getMonster(-1, -1, gid);
-        !target && (target = findTarget(gid, lastLoc));
-
-        if (!target) {
-          console.warn("ÿc1Failed to kill " + who + " (couldn't relocate unit)");
-          break;
-        }
+    // Explicit killTarget must not honor SkipEnchant / SkipAura / SkipImmune —
+    // those are for clear() farming. LE SkipEnchant was aborting Rakanishu when
+    // lightRes < 75 (SCL-SORC Nov 4–5 instant "Failed to kill" with empty errorInfo).
+    try {
+      if (Attack.skipCheck(target)) {
+        console.warn("ÿc8KillTargetÿc0 :: SkipEnchant/SkipAura/SkipImmune would skip " + who
+          + " — proceeding anyway (explicit kill)");
       }
-
-      if (Config.Dodge && me.hpPercent <= Config.DodgeHP) {
-        this.deploy(target, Config.DodgeRange, 5, 9);
-      }
-      if (attackCount > 0 && attackCount % 15 === 0) {
-        Skill.getRange(Config.AttackSkill[1]) < 4 && Packet.flash(me.gid);
-      }
-      me.overhead("KillTarget: " + target.name + " health " + target.hpPercent + " % left");
-      let result = ClassAttack[me.classid].doAttack(target, attackCount % 15 === 0);
-
-      if (result === this.Result.FAILED) {
-        if (retry++ > 3) {
-          errorInfo = " (doAttack failed)";
-
-          break;
-        }
-
-        Packet.flash(me.gid);
-      } else if (result === this.Result.CANTATTACK) {
-        errorInfo = " (No valid attack skills)";
-
-        break;
-      } else if (result === this.Result.NEEDMANA) {
-        continue;
-      } else {
-        retry = 0;
-      }
-
-      lastLoc = { x: me.x, y: me.y };
-      attackCount++;
-
-      if (target.dead || Config.FastPick || attackCount % 5 === 0) {
-        Config.FastPick ? Pickit.fastPick() : Pickit.essessntialsPick(false);
-      }
+    } catch (e) {
+      //
     }
 
-    attackCount === Config.MaxAttackCount && (errorInfo = " (attackCount exceeded: " + attackCount + ")");
+    for (let engage = 0; engage < maxEngage; engage++) {
+      if (Attack.haveKilled(who)) {
+        break;
+      }
+
+      // Reacquire between engages (stale Unit / mid-fight relocate)
+      if (engage > 0) {
+        target = Game.getMonster(-1, -1, gid);
+        if (!target) {
+          target = Misc.poll(function () {
+            return Game.getMonster(who) || Game.getMonster(name);
+          }, 2000, 100);
+        }
+        if (!target || target.dead) {
+          break;
+        }
+        if (!target.attackable) {
+          break;
+        }
+
+        console.warn("ÿc8KillTargetÿc0 :: Re-engaging " + who
+          + " (attempt " + (engage + 1) + "/" + maxEngage + ")");
+        try {
+          if (typeof target.distance === "number" && target.distance > 20) {
+            Pather.moveNearUnit(target, 15);
+          }
+          Attack.clear(15, 0, target);
+        } catch (e) {
+          //
+        }
+
+        target = Game.getMonster(-1, -1, gid) || Game.getMonster(who) || target;
+        if (!target || target.dead || Attack.haveKilled(who)) {
+          break;
+        }
+        if (!target.attackable) {
+          break;
+        }
+
+        retry = 0;
+        attackCount = 0;
+        errorInfo = "";
+      }
+
+      // Do NOT gate on skipCheck — explicit named kills always attack
+      while (attackCount < Config.MaxAttackCount && target.attackable) {
+        // Check if unit got invalidated, happens if necro raises a skeleton from the boss's corpse.
+        if (!target || !copyUnit(target).x) {
+          target = Game.getMonster(-1, -1, gid);
+          !target && (target = findTarget(gid, lastLoc));
+
+          if (!target) {
+            console.warn("ÿc1Failed to kill " + who + " (couldn't relocate unit)");
+            break;
+          }
+        }
+
+        if (Config.Dodge && me.hpPercent <= Config.DodgeHP) {
+          this.deploy(target, Config.DodgeRange, 5, 9);
+        }
+        if (attackCount > 0 && attackCount % 15 === 0) {
+          Skill.getRange(Config.AttackSkill[1]) < 4 && Packet.flash(me.gid);
+        }
+        me.overhead("KillTarget: " + target.name + " health " + target.hpPercent + " % left");
+        let result = ClassAttack[me.classid].doAttack(target, attackCount % 15 === 0);
+
+        if (result === this.Result.FAILED) {
+          if (retry++ > 3) {
+            errorInfo = " (doAttack failed)";
+
+            break;
+          }
+
+          Packet.flash(me.gid);
+        } else if (result === this.Result.CANTATTACK) {
+          errorInfo = " (No valid attack skills)";
+
+          break;
+        } else if (result === this.Result.NEEDMANA) {
+          continue;
+        } else {
+          retry = 0;
+        }
+
+        lastLoc = { x: me.x, y: me.y };
+        attackCount++;
+
+        if (target.dead || Config.FastPick || attackCount % 5 === 0) {
+          Config.FastPick ? Pickit.fastPick() : Pickit.essessntialsPick(false);
+        }
+      }
+
+      attackCount === Config.MaxAttackCount && (errorInfo = " (attackCount exceeded: " + attackCount + ")");
+
+      // Diagnosable log when Skip* used to abort with empty errorInfo (0 attacks)
+      if (!!target && target.attackable && attackCount === 0 && !errorInfo) {
+        errorInfo = " (no attacks landed)";
+      }
+
+      if (!target || !target.attackable || target.dead || Attack.haveKilled(who)) {
+        break;
+      }
+      // else fall through to next engage attempt
+    }
+
     ClassAttack[me.classid].afterAttack();
     Pickit.pickItems();
 
-    if (!!target && target.attackable) {
+    if (!!target && target.attackable && !Attack.haveKilled(who) && !target.dead) {
+      if (attackCount === 0 && !errorInfo) {
+        errorInfo = " (no attacks landed)";
+      }
       console.warn("ÿc1Failed to kill ÿc0" + who + errorInfo);
     } else {
       if (target && target.dead && (target.isBoss || target.uniqueid > -1)) {

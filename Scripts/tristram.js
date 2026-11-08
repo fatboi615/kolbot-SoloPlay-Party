@@ -3,6 +3,8 @@
 *  @author      theBGuy
 *  @credit      sonic, autosmurf
 *  @desc        rescue cain and leveling
+*  @patch       D2BotNG local — retry Rakanishu after killTarget if still alive
+*               (pairs with AttackOverrides killTarget SkipEnchant bypass).
 *
 */
 
@@ -60,7 +62,21 @@ function tristram () {
     let rak = Game.getMonster(getLocaleString(sdk.locale.monsters.Rakanishu));
     return rak && (rak.dead || rak.distance < 20);
   }, offX: 10, offY: 10 });
-  Attack.killTarget(getLocaleString(sdk.locale.monsters.Rakanishu));
+  const rakName = getLocaleString(sdk.locale.monsters.Rakanishu);
+  Attack.killTarget(rakName);
+  // Hardened retry: killTarget can still fail if target relocated mid-fight
+  if (!Attack.haveKilled(rakName)) {
+    let rak = Game.getMonster(rakName);
+    if (rak && rak.attackable && !rak.dead) {
+      console.log("ÿc8Kolbot-SoloPlayÿc0: Retrying Rakanishu");
+      try {
+        Attack.clear(20, 0, rak);
+      } catch (e) {
+        //
+      }
+      Attack.killTarget(rakName);
+    }
+  }
   Pather.moveToPreset(sdk.areas.StonyField, sdk.unittype.Object, sdk.quest.chest.StoneAlpha, null, null, true);
 
   if (!Misc.checkQuest(sdk.quest.id.TheSearchForCain, 4) && me.getItem(sdk.items.quest.KeytotheCairnStones)) {

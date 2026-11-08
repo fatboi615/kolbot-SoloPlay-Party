@@ -22,6 +22,9 @@ include("SoloPlay/Tools/SoloIndex.js");
 include("SoloPlay/Core/ConfigOverrides.js");
 include("SoloPlay/Core/Globals.js");
 
+includeIfNotIncluded("modules/ChickenLog.js");
+includeIfNotIncluded("modules/LiveStatus.js"); // sanitized local status file (logs/status-<profile>.json)
+
 /** @todo trim the uneeded files/global variables from this file */
 
 function main () {
@@ -769,6 +772,8 @@ function main () {
         Config.UseRejuvHP > 0 && me.hpPercent < Config.UseRejuvHP && drinkPotion(sdk.items.type.RejuvPotion);
 
         if (Config.LifeChicken > 0 && me.hpPercent <= Config.LifeChicken && !me.inTown) {
+          try { ChickenLog.log({ kind: "LIFE", nearest: Attack.getNearestMonster(), script: debugInfo.currScript }); } catch (e) {}
+          try { LiveStatus.chicken("LIFE", { nearest: Attack.getNearestMonster(), script: debugInfo.currScript }); } catch (e) {}
           if (!Settings.hideChickens) {
             D2Bot.printToConsole("Life Chicken (" + me.hp + "/" + me.hpmax + ")" + Attack.getNearestMonster() + " in " + getAreaName(me.area) + ". Ping: " + me.ping, sdk.colors.D2Bot.Red);
           }
@@ -787,6 +792,8 @@ function main () {
         }
 
         if (Config.ManaChicken > 0 && me.mpPercent <= Config.ManaChicken && !me.inTown) {
+          try { ChickenLog.log({ kind: "MANA", script: debugInfo.currScript }); } catch (e) {}
+          try { LiveStatus.chicken("MANA", { script: debugInfo.currScript }); } catch (e) {}
           if (!Settings.hideChickens) {
             D2Bot.printToConsole("Mana Chicken: (" + me.mp + "/" + me.mpmax + ") in " + getAreaName(me.area), sdk.colors.D2Bot.Red);
           }
@@ -803,6 +810,8 @@ function main () {
           if (ironGolem) {
             // ironGolem.hpmax is bugged with BO
             if (ironGolem.hp <= Math.floor(128 * Config.IronGolemChicken / 100)) {
+              try { ChickenLog.log({ kind: "IRONGOLEM", script: debugInfo.currScript }); } catch (e) {}
+              try { LiveStatus.chicken("IRONGOLEM", { script: debugInfo.currScript }); } catch (e) {}
               if (!Settings.hideChickens) {
                 D2Bot.printToConsole("Irom Golem Chicken in " + getAreaName(me.area), sdk.colors.D2Bot.Red);
               }
@@ -820,6 +829,8 @@ function main () {
 
             if (mercHP > 0 && merc.mode !== sdk.monsters.mode.Dead) {
               if (mercHP < Config.MercChicken) {
+                try { ChickenLog.log({ kind: "MERC", script: debugInfo.currScript }); } catch (e) {}
+                try { LiveStatus.chicken("MERC", { mercHP: mercHP, script: debugInfo.currScript }); } catch (e) {}
                 if (!Settings.hideChickens) {
                   D2Bot.printToConsole("Merc Chicken in " + getAreaName(me.area), sdk.colors.D2Bot.Red);
                 }
@@ -847,6 +858,7 @@ function main () {
       }
     } catch (e) {
       Misc.errorReport(e, "ToolsThread");
+      try { LiveStatus.error(e, "ToolsThread"); } catch (e2) {}
 
       quitFlag = true;
     }
@@ -869,6 +881,8 @@ function main () {
       debugInfo.area = getAreaName(me.area);
       DataFile.updateStats("debugInfo", JSON.stringify(debugInfo));
     }
+
+    try { LiveStatus.tick({ script: debugInfo.currScript }); } catch (e) {}
 
     delay(20);
   }

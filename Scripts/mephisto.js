@@ -2,8 +2,33 @@
 *  @filename    mephisto.js
 *  @author      kolton, theBGuy
 *  @desc        mephisto quest
+*  @patch       D2BotNG local — pre-boss thawing/antidote prep BEFORE first
+*               Durance travel so we do not WP Durance L3 → Act 4 mid-run
+*               solely for cold res (SCL-SORC Nov 5, 2026 ~15:20 America/Chicago
+*               native Game.exe crash after buyPots saw coldRes -31).
+*               Stock Meph kill / council / red-portal behavior kept.
 *
 */
+
+/**
+ * Pure helper (also used by offline Node tests).
+ * @param {{coldRes?:number, poisonRes?:number}} meLike
+ * @returns {{needed:boolean, thawing:boolean, antidote:boolean}}
+ */
+function mephistoResPrep(meLike) {
+  const coldRaw = meLike && meLike.coldRes;
+  const poisonRaw = meLike && meLike.poisonRes;
+  const cold = (typeof coldRaw === "number" && isFinite(coldRaw)) ? coldRaw : 0;
+  const poison = (typeof poisonRaw === "number" && isFinite(poisonRaw)) ? poisonRaw : 0;
+  const thawing = cold < 75;
+  const antidote = poison < 75;
+
+  return {
+    needed: thawing || antidote,
+    thawing: thawing,
+    antidote: antidote
+  };
+}
 
 function mephisto () {
   const killCouncil = function () {
@@ -20,6 +45,20 @@ function mephisto () {
   };
 
   Town.doChores(false, { fullChores: true });
+
+  // Pre-boss res prep BEFORE Durance — fullChores alone can skip buyPots
+  // (SCL-SORC Nov 5: chores healed/shopped in Act 4 then returned to Docktown
+  // without thawing; mid-script town from L3 for coldRes -31 preceded native crash).
+  {
+    const prep = mephistoResPrep(me);
+
+    if (prep.needed) {
+      console.log("ÿc8Kolbot-SoloPlayÿc0: mephisto pre-boss res prep (thawing="
+        + prep.thawing + ", antidote=" + prep.antidote + ")");
+      Town.doChores(null, { thawing: prep.thawing, antidote: prep.antidote });
+    }
+  }
+
   myPrint("starting mephisto");
 
   Pather.checkWP(sdk.areas.DuranceofHateLvl2, true)
@@ -42,8 +81,10 @@ function mephisto () {
     return false;
   }
 
-  // Town stuff
+  // Rare mid-run fallback if pots expired / prep missed — stock portal return.
+  // After pre-boss prep this should almost never fire.
   if (me.coldRes < 75 || me.poisonRes < 75) {
+    console.log("ÿc8Kolbot-SoloPlayÿc0: mephisto mid-run res fallback (pre-boss prep should have covered this)");
     Town.doChores(null, { thawing: me.coldRes < 75, antidote: me.poisonRes < 75 });
     // Re-enter portal
     Pather.usePortal(sdk.areas.DuranceofHateLvl3, me.name);

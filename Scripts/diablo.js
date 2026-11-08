@@ -2,8 +2,37 @@
 *  @filename    diablo.js
 *  @author      theBGuy
 *  @desc        Diablo
+*  @patch       D2BotNG local — (1) retry Infector after seal-kill failure before
+*               diabloPrep (SCL-SORC Nov 4 Failed to kill Infector → Diablo not
+*               found); (2) pre-boss thawing/antidote prep BEFORE first River of
+*               Flame / Chaos travel so we do not town mid-run after Chaos
+*               entrance solely for cold/poison res (same mid-run Act WP class
+*               as SCL-SORC Nov 5, 2026 Mephisto crash after buyPots saw
+*               coldRes -31). Stock seal / diabloPrep / pwnDia / changeAct kept.
 *
 */
+
+/**
+ * Pure helper (also used by offline Node tests).
+ * Same thresholds as Mephisto/Andariel/Baal — thawing if coldRes<75,
+ * antidote if poisonRes<75; missing/non-finite default to 0.
+ * @param {{coldRes?:number, poisonRes?:number}} meLike
+ * @returns {{needed:boolean, thawing:boolean, antidote:boolean}}
+ */
+function diabloResPrep(meLike) {
+  const coldRaw = meLike && meLike.coldRes;
+  const poisonRaw = meLike && meLike.poisonRes;
+  const cold = (typeof coldRaw === "number" && isFinite(coldRaw)) ? coldRaw : 0;
+  const poison = (typeof poisonRaw === "number" && isFinite(poisonRaw)) ? poisonRaw : 0;
+  const thawing = cold < 75;
+  const antidote = poison < 75;
+
+  return {
+    needed: thawing || antidote,
+    thawing: thawing,
+    antidote: antidote
+  };
+}
 
 // todo: clean this up, listen for lights game packet while opening/checking seals
 
@@ -82,6 +111,21 @@ function diablo () {
 
   // START
   Town.doChores(false, { fullChores: true });
+
+  // Pre-boss res prep BEFORE River of Flame / Chaos — fullChores alone can
+  // skip buyPots; stock bought thawing/antidote only AFTER Chaos entrance
+  // (forces mid-run town + portal return). Same mid-run Act WP class as
+  // Mephisto/Andariel/Baal/Duriel prep already shipped.
+  {
+    const prep = diabloResPrep(me);
+
+    if (prep.needed) {
+      console.log("ÿc8Kolbot-SoloPlayÿc0: diablo pre-boss res prep (thawing="
+        + prep.thawing + ", antidote=" + prep.antidote + ")");
+      Town.doChores(null, { thawing: prep.thawing, antidote: prep.antidote });
+    }
+  }
+
   myPrint("starting diablo");
 
   Pather.checkWP(sdk.areas.RiverofFlame, true)
@@ -97,7 +141,10 @@ function diablo () {
     attempts++;
   }
 
+  // Rare mid-run fallback if pots expired / prep missed — stock portal return.
+  // After pre-boss prep this should almost never fire.
   if (me.coldRes < 75 || me.poisonRes < 75) {
+    console.log("ÿc8Kolbot-SoloPlayÿc0: diablo mid-run res fallback (pre-boss prep should have covered this)");
     Town.doChores(null, { thawing: me.coldRes < 75, antidote: me.poisonRes < 75 });
     Town.move("portalspot");
     Pather.usePortal(sdk.areas.ChaosSanctuary, me.name);
@@ -137,6 +184,17 @@ function diablo () {
     Common.Diablo.infectorSeal();
   } catch (e) {
     console.error(e);
+    // Harden: if Infector (or earlier seal) failed, try Infector once more before diabloPrep.
+    // Seals already open are no-ops inside openSeal; haveKilled short-circuits a dead Infector.
+    try {
+      const infName = getLocaleString(sdk.locale.monsters.InfectorofSouls);
+      if (!Attack.haveKilled(infName)) {
+        console.log("ÿc8Kolbot-SoloPlayÿc0: Retrying Infector after seal error.");
+        Common.Diablo.infectorSeal();
+      }
+    } catch (e2) {
+      console.error(e2);
+    }
   } finally {
     oldCP.Range !== Config.ClearPath.Range && (Object.assign(Config.ClearPath, oldCP));
     oldBP !== Config.BossPriority && (Config.BossPriority = oldBP);

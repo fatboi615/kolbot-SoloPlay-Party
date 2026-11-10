@@ -243,6 +243,8 @@
   let _frozenHost = "";
   /** in a game we already ended / left (see initInGame) */
   let _staleGame = false;
+  /** we were this game's host and our scripts restarted (TownChicken, a crash) - carry on from this step */
+  let _resumeStep = 0;
   let _hostCache = { tick: 0, value: "" };
 
   /**
@@ -2222,7 +2224,8 @@
       }
     }
 
-    let step = 0;
+    // restarted mid-game as host: keep numbering after the last step so the followers (who already did those) answer
+    let step = _resumeStep || 0;
     let stop = false;
 
     // we're far behind and the party has a teleporter: get rushed through the acts first (we made the game, like kolbot's AutoRush wants)
@@ -2881,8 +2884,9 @@
     _initialized = true;
     // our scripts restarted inside a game we already ended or left (the exit didn't go through)? don't start
     // playing in it - nobody is hosting it anymore, and whoever is still here would end up waiting on us
+    let mine = null;
     try {
-      let mine = Party.readGameFile(myProfile);
+      mine = Party.readGameFile(myProfile);
       _staleGame = !!(mine && mine.finishedGame && sameGame(mine.finishedGame));
     } catch (e) {
       _staleGame = false;
@@ -2899,7 +2903,23 @@
         break;
       }
     }
-    // no host flag found (shouldn't happen) - same answer for everyone: configured leader if it's here
+    // no host flag: whoever is (or just was - our own scripts restarting mid-game) leading this game still is.
+    // Without this a host that restarts follows someone who follows it, and nobody leads.
+    if (!gameHost) {
+      const done = ["end", "left", "gone"];
+      for (let m of members) {
+        let g = m === myProfile ? mine : Party.readGameFile(m);
+        if (g && g.role === "leader" && sameGame(g.game) && !done.includes(g.phase) && fresh(g, m === myProfile ? 120 : 20)) {
+          gameHost = m;
+          break;
+        }
+      }
+    }
+    if (gameHost === myProfile && mine && mine.role === "leader" && sameGame(mine.game) && mine.step > 0) {
+      _resumeStep = mine.step;
+      log("Our scripts restarted - still this game's host, carrying on after step " + _resumeStep, true);
+    }
+    // nothing at all (shouldn't happen) - same answer for everyone: configured leader if it's here
     if (!gameHost) {
       gameHost = (configuredLeader === myProfile || Party.inGame(configuredLeader)) ? configuredLeader : Party.hostProfile();
     }

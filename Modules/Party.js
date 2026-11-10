@@ -1457,6 +1457,25 @@
 
     let ok = false;
 
+    // Throne of Destruction -> Worldstone Chamber is a portal, not an exit: walking "next door" fails and the
+    // fallback (town, waypoint to Worldstone Keep 2, walk down) took long enough to miss the Baal kill
+    if (area === sdk.areas.WorldstoneChamber && me.inArea(sdk.areas.ThroneofDestruction)) {
+      try {
+        me.overhead("Party: taking the Worldstone portal");
+        Pather.moveTo(15090, 5008);
+        let portal = Misc.poll(function () {
+          return Game.getObject(sdk.objects.WorldstonePortal);
+        }, 3000, 200);
+        portal && Pather.usePortal(null, null, portal);
+        ok = me.inArea(sdk.areas.WorldstoneChamber);
+        ok && console.log("ÿc8[Party]ÿc0 took the Worldstone portal to " + getAreaName(area));
+      } catch (e) {
+        ok = false;
+      }
+      if (!ok) delay(500); // portal not up yet - keep waiting by it rather than going all the way round
+      return ok;
+    }
+
     try {
       // can we walk there from here (next door) or waypoint there?
       let nextDoor = false;

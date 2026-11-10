@@ -1358,6 +1358,7 @@ const LocationAction = {
       lastPartyJoin = target.game;
       // going back into our own game: we're still its host
       Party.markHosting(rejoining);
+      rejoining && Party.noteRejoin(target.game);
       Controls.JoinGame.click();
       Starter.lastGameStatus = "pending";
     } finally {

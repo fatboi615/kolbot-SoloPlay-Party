@@ -471,8 +471,27 @@
 
   let _lastOogWrite = 0;
   let _oogExtra = {};
-  /** the last game this entry script saw us in (the oog file forgets it once we're out) */
+  /**
+   * the last game we were in. Also saved in our oog file (lastGame...) so it survives a game crash, which restarts
+   * the entry script too.
+   */
   let _lastGame = { game: "", pass: "", diff: "", tick: 0 };
+  let _lastGameLoaded = false;
+  /** how often we went back into each game - a game that keeps crashing us isn't worth a 4th try */
+  let _rejoins = {};
+  const loadLastGame = function () {
+    if (_lastGameLoaded) return;
+    _lastGameLoaded = true;
+    try {
+      let o = Party.readOog(myProfile);
+      if (o && o.lastGame && !_lastGame.game) {
+        _lastGame = { game: o.lastGame, pass: o.lastPass || "", diff: o.lastDiff || "", tick: o.lastGameTick || 0 };
+      }
+      o && o.rejoins && typeof o.rejoins === "object" && (_rejoins = o.rejoins);
+    } catch (e) {
+      // ignore
+    }
+  };
 
   /**
    * Called every loop of the entry script (both out of game and while in game). Throttled to 2s.
@@ -481,6 +500,7 @@
    */
   Party.oogHeartbeat = function (force = false, extra = null) {
     if (!enabled) return;
+    loadLastGame();
     extra && Object.assign(_oogExtra, extra);
     if (!force && Date.now() - _lastOogWrite < 2000) return;
     _lastOogWrite = Date.now();
@@ -527,6 +547,11 @@
       diff: diff,
       wantDiff: Party.myWantDiff(),
       charName: charName,
+      lastGame: _lastGame.game,
+      lastPass: _lastGame.pass,
+      lastDiff: _lastGame.diff,
+      lastGameTick: _lastGame.tick,
+      rejoins: _rejoins,
     }));
   };
 
@@ -566,8 +591,10 @@
    */
   Party.rejoinTarget = function () {
     if (!enabled || !settings.HostRejoinWait || inGameNow()) return null;
+    loadLastGame();
     if (!_lastGame.game || Date.now() - _lastGame.tick > Time.seconds(settings.HostRejoinWait + 30)) return null;
     if ((joinFails[lc(_lastGame.game)] || 0) >= 2) return null;
+    if ((_rejoins[lc(_lastGame.game)] || 0) >= 3) return null;
     try {
       if (me.diedHardcore) return null;
     } catch (e) {
@@ -584,6 +611,15 @@
       return !!o && fresh(o, 20) && o.status === "ingame" && lc(o.game || "") === lc(_lastGame.game);
     });
     return waiting ? { game: _lastGame.game, pass: _lastGame.pass, diff: _lastGame.diff } : null;
+  };
+
+  /** @param {string} game - we're clicking join on our old game again */
+  Party.noteRejoin = function (game) {
+    let key = lc(game);
+    let keep = {};
+    keep[key] = (_rejoins[key] || 0) + 1;
+    _rejoins = keep; // only the current game matters
+    Party.oogHeartbeat(true);
   };
 
   /**
@@ -2569,6 +2605,12 @@
           if (settings.LeaderLedScripts && needers.includes(leader)) {
             // leader is doing it too - stick to the leader and fight together instead of running our own copy
             followLeaderThrough(ls.step, ls.script);
+            // the leader dropped out in the middle of it (chicken, crash): the boss isn't necessarily dead and this
+            // wasn't a real try - wait for it to come back (it plans this again) instead of counting a miss
+            if (!Party.inGame(leader)) {
+              log(leader + " dropped out during " + ls.script + " - not counting it as a try");
+              continue;
+            }
             // the leader did the work - if all that's left is talking to an npc, just do that
             let stillNeed = questNotDone(ls.script);
             if (stillNeed && collectReward(ls.script)) {

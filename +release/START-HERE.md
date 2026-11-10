@@ -85,6 +85,6 @@ This package puts together open source work by:
 - [D2BotNG](https://github.com/ResurrectedTrader/D2BotNG) - ResurrectedTrader (this build adds richer Discord notifications)
 - [kolbot](https://github.com/blizzhackers/kolbot) and [D2BS](https://github.com/blizzhackers/kolbot) - blizzhackers
 - [Kolbot-SoloPlay](https://github.com/blizzhackers/kolbot-SoloPlay) - theBGuy
-- Party mode, Arrange Bots, Bot Viewer - [kolbot-SoloPlay-Party](https://github.com/fatboi615/kolbot-SoloPlay-Party)
+- Party mode, Arrange Bots, Bot Viewer - [kolbot-SoloPlay-party](https://github.com/fatboi615/kolbot-SoloPlay-party)
 
 See `CREDITS.md` for details and licenses.

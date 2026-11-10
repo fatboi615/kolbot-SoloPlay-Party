@@ -2993,13 +2993,14 @@
     const choresBeforeParty = Town.doChores;
     Town.doChores = function () {
       // we're the taxi and already standing where our script is going (see taxiRun) - its opening town visit
-      // would undo the trip. Skip it once, unless we really need town (potions, repair, merc).
+      // would undo the trip. Skip it once. Potions don't count: a teleporting sorc always used some on the way
+      // (TownChicken still goes when it's urgent) - only broken gear or a dead merc are worth the trip now.
       const t = _taxiLanded;
       if (t && t.self && !t.choresSkipped && t.step === _scriptStep && me.inArea(t.area) && !me.inTown) {
         t.choresSkipped = true;
         let need = false;
         try {
-          need = me.needPotions() || me.needRepair().length > 0 || me.needMerc();
+          need = me.needRepair().length > 0 || me.needMerc();
         } catch (e) {
           need = false;
         }

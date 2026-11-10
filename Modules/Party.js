@@ -66,6 +66,10 @@
     BossWaitNeeders: 90,
     Rush: true,
     RushWhenBehindActs: 1,
+    // a rush that hasn't finished after this many minutes per act-boss (+1 step's worth) is stuck - kolbot's
+    // Rushee/AutoRush wait on each other forever when something goes wrong. The rush game ends and normal play
+    // resumes. 0 = no limit
+    RushStepMinutes: 5,
     Rusher: "",
     BattleOrders: true,
     Debug: false,
@@ -2132,6 +2136,38 @@
    * @param {{ rushee: string, rusher: string, targetAct: number }} rush
    * @param {number} step
    */
+  /** when the rush we're being given counts as stuck (0 = no rush running) */
+  let _rushDeadline = 0;
+  let _rushQuitAt = 0;
+
+  /** background worker: end a rush game that's gone nowhere for too long */
+  const rushWatchdog = function () {
+    if (_rushQuitAt) {
+      // asked kolbot to quit a while ago and we're still here - pull the plug
+      if (Date.now() - _rushQuitAt > Time.seconds(15)) {
+        _rushQuitAt = 0;
+        try {
+          me.ingame && quit();
+        } catch (e) {
+          // ignore
+        }
+      }
+      return;
+    }
+    if (!_rushDeadline || Date.now() < _rushDeadline) return;
+    _rushDeadline = 0;
+    log("The rush is stuck (nothing finished in " + Math.round((Date.now() - (Party.state.rushStart || Date.now())) / 60000)
+      + " min) - ending the rush game, normal play next game", true);
+    Object.assign(Party.state, { phase: "end", script: "", running: "", finishedGame: me.gamename || "" });
+    Party.writeGame();
+    _rushQuitAt = Date.now();
+    try {
+      scriptBroadcast("quit");
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const runAsRushee = function (rush, step) {
     const seqs = rushNeeds().filter(function (n) {
       return rushStepAct(n) < rush.targetAct;
@@ -2166,11 +2202,14 @@
       // kolbot's scripts are top-level `const X = new Runnable(...)` (the Loader finds them on global)
       const rushee = typeof Rushee !== "undefined" ? Rushee : global.Rushee;
       if (!rushee || typeof rushee.action !== "function") throw new Error("scripts/Rushee.js has no action");
+      Party.state.rushStart = Date.now();
+      _rushDeadline = settings.RushStepMinutes > 0 ? Date.now() + Time.minutes(settings.RushStepMinutes * (seqs.length + 1)) : 0;
       rushee.action();
     } catch (e) {
       log("Rush: kolbot's Rushee stopped - " + (e.message || e), true);
     }
     _rushChat = false;
+    _rushDeadline = 0;
     Party.state.running = "";
     Party.writeGame();
     return step;
@@ -3290,6 +3329,7 @@
           Party.writeGame();
         }
         isFollower && leaderWatchdog();
+        rushWatchdog();
         // no waiting from in here any more - the heartbeat runs inside delay(), which can be the middle of making
         // or taking a portal. The runner only waits at planned moments (see arrive / paceCheck hooks).
       } catch (e) {

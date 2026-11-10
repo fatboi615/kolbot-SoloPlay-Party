@@ -112,6 +112,7 @@ Diablo II 1.14d can't scale its window; stretching add-ons like cnc-ddraw rescal
 | `MakeWay` | true | Helpers right next to a leader that keeps failing to move step behind it for a few seconds (narrow walkways, doors) |
 | `Rush` | true | The party's teleporter rushes a far-behind member through the act bosses |
 | `RushWhenBehindActs` | 1 | How many acts behind (another difficulty = always) before rushing |
+| `RushStepMinutes` | 5 | Minutes per boss before a rush counts as stuck and the rush game ends. 0 = no limit |
 | `Rusher` | "" | Profile that rushes; empty = highest level member that can teleport |
 | `HoldAtPortal` | true | Followers wait at the leader's portal while it's in town; leader returns through it |
 | `BossWaitNeeders` | 90 | At a boss, wait this long for a member that still needs the quest (it can't get credit once the boss is dead) |

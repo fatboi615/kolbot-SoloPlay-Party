@@ -171,6 +171,13 @@
     RushWhenBehindActs: 1,
 
     /**
+     * @desc - a rush that hasn't finished after this many minutes per boss (plus one more boss's worth) is stuck:
+     *   kolbot's rush scripts can wait on each other forever when the one being rushed misses the portal. The rush
+     *   game then ends and the party plays normally next game. 0 = no limit.
+     */
+    RushStepMinutes: 5,
+
+    /**
      * @desc - profile that does the rushing. "" = the highest level member that can teleport
      */
     Rusher: "",

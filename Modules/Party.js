@@ -985,12 +985,29 @@
     _leaderBusy = true;
     _regroupedAt = {};
 
+    // we're the taxi standing where this script is going (see taxiRun): the loader would send us to town first
+    let addedSkip = false;
+    try {
+      const t = _taxiLanded;
+      if (t && t.self && t.step === _scriptStep && me.inArea(t.area) && Array.isArray(Loader.skipTown)
+        && !Loader.skipTown.includes(script)) {
+        Loader.skipTown.push(script);
+        addedSkip = true;
+      }
+    } catch (e) {
+      addedSkip = false;
+    }
+
     try {
       result = Loader.runIndexedScript(script, SoloIndex.scripts.indexOf(script));
     } catch (e) {
       console.error(e);
       result = "error";
     } finally {
+      if (addedSkip) {
+        let at = Loader.skipTown.indexOf(script);
+        at > -1 && Loader.skipTown.splice(at, 1);
+      }
       _scriptName = "";
       _leaderBusy = false;
       doneThisPass.add(script);

@@ -1220,7 +1220,7 @@
   let _taxiPath = null;
   /**
    * rider: we came through the taxi portal to `area` - the script's own way there (areas in `approach`) is done
-   * @type {{ step: number, area: number, approach: number[] } | null}
+   * @type {{ step: number, area: number, approach: number[], self?: boolean, choresSkipped?: boolean } | null}
    */
   let _taxiLanded = null;
 
@@ -1251,16 +1251,19 @@
 
   /**
    * Taxi: teleport to the quest area, open a portal and come back to town through it (so it stays open).
+   * When the taxi runs this script itself (`stay`), it stays there instead: its portal is the meeting point, and
+   * its script starts right there (no trip back to town, no second teleport down).
    * @param {number} step
    * @param {string} script
+   * @param {boolean} [stay]
    */
-  const taxiRun = function (step, script) {
+  const taxiRun = function (step, script, stay) {
     const area = Party.taxiDestination(script);
     if (!area) return;
     const act = sdk.areas.actOf(area);
     if (!me.accessToAct(act)) return;
 
-    Party.state.taxi = { step: step, area: area, ready: false, failed: false };
+    Party.state.taxi = { step: step, area: area, ready: false, failed: false, since: Date.now() };
     Party.writeGame();
     me.overhead("Party: taxi to " + getAreaName(area));
     log(me.name + " teleporting ahead to " + getAreaName(area) + " for " + script);
@@ -1275,15 +1278,25 @@
       path = _taxiPath.slice(0);
       _taxiPath = null;
       if (me.inArea(area)) {
-        ok = !!Pather.makePortal(true);
+        ok = !!Pather.makePortal(!stay);
       }
     } catch (e) {
       _taxiPath = null;
       console.warn("Party :: taxi to " + getAreaName(area) + " failed - " + (e.message || e));
     }
 
+    if (stay && me.inArea(area)) {
+      // our script's own way here (town chores, waypoint, the floors on the way) is already done
+      _taxiLanded = {
+        step: step, area: area, self: true,
+        approach: path.filter(function (a, i) {
+          return !!a && a !== area && !sdk.areas.Towns.includes(a) && path.indexOf(a) === i;
+        }),
+      };
+    }
+
     // back in town through our own portal so it stays open (making a new one would close it)
-    if (!me.inTown) {
+    if (!stay && !me.inTown) {
       try {
         Pather.usePortal(null, me.name) || Town.goToTown();
       } catch (e) {
@@ -1710,6 +1723,18 @@
           !walked && (me.accessToAct(act) ? Town.goToTown(act) : Town.goToTown());
         }
         townChores();
+        delay(500);
+        return true;
+      }
+
+      // they're the taxi and still on the way to open a portal: wait for it in town, don't chase them area by area
+      let cab = theirs ? theirs.taxi : null;
+      if (settings.Taxi && cab && !cab.ready && !cab.failed && cab.since && Date.now() - cab.since < Time.seconds(settings.TaxiWait)
+        && cab.area && !me.inArea(cab.area) && me.accessToAct(sdk.areas.actOf(cab.area))) {
+        const cabAct = sdk.areas.actOf(cab.area);
+        if (!me.inTown || me.act !== cabAct) Town.goToTown(cabAct);
+        townChores();
+        me.overhead("Party: waiting for " + name + "'s portal to " + getAreaName(cab.area));
         delay(500);
         return true;
       }
@@ -2453,9 +2478,11 @@
         _scriptStep = ls.step;
         const needers = Array.isArray(ls.needers) ? ls.needers : [];
 
-        // we can teleport - run ahead and open a portal for everyone
+        // we can teleport - run ahead and open a portal for everyone. Running this one ourselves (not with the
+        // leader)? stay there and start it from the portal instead of coming back to town for it
         if (Party.taxiProfile() === myProfile && Party.taxiDestination(ls.script)) {
-          taxiRun(ls.step, ls.script);
+          const selfRun = needers.includes(myProfile) && !(settings.LeaderLedScripts && needers.includes(leader));
+          taxiRun(ls.step, ls.script, selfRun);
         }
 
         if (needers.includes(myProfile)) {
@@ -2965,6 +2992,22 @@
     busy(Pather, "useWaypoint");
     const choresBeforeParty = Town.doChores;
     Town.doChores = function () {
+      // we're the taxi and already standing where our script is going (see taxiRun) - its opening town visit
+      // would undo the trip. Skip it once, unless we really need town (potions, repair, merc).
+      const t = _taxiLanded;
+      if (t && t.self && !t.choresSkipped && t.step === _scriptStep && me.inArea(t.area) && !me.inTown) {
+        t.choresSkipped = true;
+        let need = false;
+        try {
+          need = me.needPotions() || me.needRepair().length > 0 || me.needMerc();
+        } catch (e) {
+          need = false;
+        }
+        if (!need) {
+          console.log("ÿc8[Party]ÿc0 already at " + getAreaName(t.area) + " with the taxi portal - skipping the town visit");
+          return true;
+        }
+      }
       try {
         // in town now - this publishes the town trip (where our portal is) right away
         Party.writeGame();

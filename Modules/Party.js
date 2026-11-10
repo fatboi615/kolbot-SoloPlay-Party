@@ -1286,6 +1286,7 @@
     }
 
     if (stay && me.inArea(area)) {
+      log("Taxi stays at " + getAreaName(area) + " and starts " + script + " from here", true);
       // our script's own way here (town chores, waypoint, the floors on the way) is already done
       _taxiLanded = {
         step: step, area: area, self: true,
@@ -2993,20 +2994,26 @@
     const choresBeforeParty = Town.doChores;
     Town.doChores = function () {
       // we're the taxi and already standing where our script is going (see taxiRun) - its opening town visit
-      // would undo the trip. Skip it once. Potions don't count: a teleporting sorc always used some on the way
-      // (TownChicken still goes when it's urgent) - only broken gear or a dead merc are worth the trip now.
+      // would undo the trip. Skip it once. Potions and repairs don't count: a teleporting sorc always used some
+      // potions and item charges on the way (charges count as "repair"), TownChicken still goes when it's urgent,
+      // and the next town visit fixes the rest. Only a dead merc is worth the trip now.
       const t = _taxiLanded;
-      if (t && t.self && !t.choresSkipped && t.step === _scriptStep && me.inArea(t.area) && !me.inTown) {
-        t.choresSkipped = true;
-        let need = false;
-        try {
-          need = me.needRepair().length > 0 || me.needMerc();
-        } catch (e) {
-          need = false;
-        }
-        if (!need) {
-          console.log("ÿc8[Party]ÿc0 already at " + getAreaName(t.area) + " with the taxi portal - skipping the town visit");
-          return true;
+      if (t && t.self && !t.choresSkipped && !me.inTown) {
+        if (t.step === _scriptStep && me.inArea(t.area)) {
+          t.choresSkipped = true;
+          let mercDown = false;
+          try {
+            mercDown = me.needMerc();
+          } catch (e) {
+            mercDown = false;
+          }
+          if (!mercDown) {
+            log("Staying at " + getAreaName(t.area) + " by the taxi portal - town visit skipped", true);
+            return true;
+          }
+          log("Merc is down - going to town before " + (_scriptName || "the script"), true);
+        } else {
+          log("Taxi landing doesn't match (step " + t.step + "/" + _scriptStep + ", area " + t.area + "/" + me.area + ") - doing the town visit", true);
         }
       }
       try {

@@ -241,6 +241,8 @@
   };
 
   let _frozenHost = "";
+  /** in a game we already ended / left (see initInGame) */
+  let _staleGame = false;
   let _hostCache = { tick: 0, value: "" };
 
   /**
@@ -2314,7 +2316,7 @@
       }
     }
 
-    Object.assign(Party.state, { phase: "end", script: "", needers: [] });
+    Object.assign(Party.state, { phase: "end", script: "", needers: [], finishedGame: me.gamename || "" });
     Party.writeGame();
     log("Leader finished the script list, ending game", true);
     // give followers a moment to see the end flag
@@ -2329,6 +2331,7 @@
     let handledPlan = 0;
     let handledRun = 0;
     let lostSince = 0;
+    let orphanSince = 0;
 
     const leaderState = function () {
       let info = Party.readGameFile(leader);
@@ -2409,6 +2412,20 @@
       if (ls.phase === "end") {
         log("Leader ended the game");
         break;
+      }
+
+      // the one we follow isn't leading this game (it's following someone too): nobody is. Leave instead of
+      // waiting on each other forever; the next game gets a proper host.
+      if (ls.role === "follower") {
+        !orphanSince && (orphanSince = getTickCount());
+        if (getTickCount() - orphanSince > Time.seconds(45)) {
+          log("Nobody is leading this game (" + leader + " is following too) - leaving", true);
+          Object.assign(Party.state, { phase: "left", finishedGame: me.gamename || "" });
+          Party.writeGame();
+          break;
+        }
+      } else {
+        orphanSince = 0;
       }
 
       const list = Array.isArray(ls.list) && ls.list.length ? ls.list : SoloIndex.scripts;
@@ -2834,6 +2851,14 @@
   Party.initInGame = function () {
     if (!Party.enabled || _initialized) return false;
     _initialized = true;
+    // our scripts restarted inside a game we already ended or left (the exit didn't go through)? don't start
+    // playing in it - nobody is hosting it anymore, and whoever is still here would end up waiting on us
+    try {
+      let mine = Party.readGameFile(myProfile);
+      _staleGame = !!(mine && mine.finishedGame && sameGame(mine.finishedGame));
+    } catch (e) {
+      _staleGame = false;
+    }
     // SoloPlay's Pather.move calls this when a move keeps failing (see PatherOverrides)
     global.__partyNoteBlocked = Party.noteBlocked;
 
@@ -3163,6 +3188,20 @@
     if (updatedDifficulty) {
       CharData.updateData("me", "setDifficulty", updatedDifficulty);
       !me.realm && Messaging.sendToScript("D2BotSoloPlay.dbj", "diffChange");
+    }
+
+    if (_staleGame) {
+      log("Still in " + (me.gamename || "the old game") + ", a game we already ended - leaving", true);
+      Object.assign(Party.state, { phase: "left", finishedGame: me.gamename || "" });
+      Party.writeGame();
+      scriptBroadcast("quit");
+      delay(5000);
+      try {
+        me.ingame && quit();
+      } catch (e) {
+        // ignore
+      }
+      return true;
     }
 
     Party.state.ready = true;

@@ -248,6 +248,10 @@
   let _staleGame = false;
   /** we were this game's host and our scripts restarted (TownChicken, a crash) - carry on from this step */
   let _resumeStep = 0;
+  /** ...without redoing the scripts we already ran in this game */
+  let _resumeRan = [];
+  /** ...nor walking into the same death again: script -> times our scripts restarted during it in this game */
+  let _resumeDied = {};
   let _hostCache = { tick: 0, value: "" };
 
   /**
@@ -1181,6 +1185,24 @@
     }
     if (questScripts.includes(script) && !flag) return stillNeeds(script);
     return false;
+  };
+
+  /**
+   * questNotDone, but asks the server for fresh quest state first and gives it a few seconds: right after a kill
+   * the cached state still says "not done".
+   * @param {string} script
+   */
+  const questStillNotDone = function (script) {
+    for (let i = 0; i < 6; i++) {
+      if (!questNotDone(script)) return false;
+      try {
+        typeof Packet !== "undefined" && typeof Packet.questRefresh === "function" && Packet.questRefresh();
+      } catch (e) {
+        // ignore
+      }
+      delay(1000);
+    }
+    return questNotDone(script);
   };
 
   /**
@@ -2331,6 +2353,22 @@
 
     // restarted mid-game as host: keep numbering after the last step so the followers (who already did those) answer
     let step = _resumeStep || 0;
+    // restarted mid-game: what we already ran here, and what we went down in (see initInGame). Saved in the game
+    // file so the next restart knows too.
+    const ranHere = new Set(_resumeRan);
+    const diedIn = Object.assign({}, _resumeDied);
+    const toldSkip = new Set();
+    Party.state.ranHere = Array.from(ranHere);
+    Party.state.diedIn = diedIn;
+    /** @param {string} s @param {number} pass */
+    const skipHere = function (s, pass) {
+      if ((diedIn[s] || 0) >= 2) {
+        !toldSkip.has(s) && toldSkip.add(s) && log("Skipping " + s + " for the rest of this game - went down in it "
+          + diedIn[s] + " times", true);
+        return true;
+      }
+      return pass === 1 && ranHere.has(s);
+    };
     let stop = false;
 
     // we're far behind and the party has a teleporter: get rushed through the acts first (we made the game, like kolbot's AutoRush wants)
@@ -2407,6 +2445,7 @@
         let needers = [];
 
         for (let i = pointer; i < list.length; i++) {
+          if (skipHere(list[i], pass)) continue;
           let who = [];
           myNeeds.includes(list[i]) && who.push(myProfile);
           for (let f in replies) {
@@ -2437,6 +2476,8 @@
         }
 
         Party.state.doneStep = step;
+        ranHere.add(script);
+        Party.state.ranHere = Array.from(ranHere);
         Party.writeGame();
 
         // 4. wait for (and help) everyone else that is running it
@@ -2612,7 +2653,7 @@
               continue;
             }
             // the leader did the work - if all that's left is talking to an npc, just do that
-            let stillNeed = questNotDone(ls.script);
+            let stillNeed = questStillNotDone(ls.script);
             if (stillNeed && collectReward(ls.script)) {
               stillNeed = questNotDone(ls.script);
             }
@@ -3057,7 +3098,13 @@
     }
     if (gameHost === myProfile && mine && mine.role === "leader" && sameGame(mine.game) && mine.step > 0) {
       _resumeStep = mine.step;
-      log("Our scripts restarted - still this game's host, carrying on after step " + _resumeStep, true);
+      _resumeRan = Array.isArray(mine.ranHere) ? mine.ranHere.slice(0) : [];
+      _resumeDied = mine.diedIn && typeof mine.diedIn === "object" ? Object.assign({}, mine.diedIn) : {};
+      if (mine.phase === "run" && mine.script) {
+        _resumeDied[mine.script] = (_resumeDied[mine.script] || 0) + 1;
+      }
+      log("Our scripts restarted - still this game's host, carrying on after step " + _resumeStep
+        + (mine.phase === "run" && mine.script ? " (went down during " + mine.script + ")" : ""), true);
     }
     // nothing at all (shouldn't happen) - same answer for everyone: configured leader if it's here
     if (!gameHost) {

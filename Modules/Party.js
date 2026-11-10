@@ -37,6 +37,9 @@
     PlanTimeout: 30,
     SyncTimeout: 15,
     LeaderLostTimeout: 10,
+    // the host chickens / dies / drops: the others wait this long in town for it to come back into the same game
+    // (it rejoins and carries on from the next step) instead of everyone starting over. 0 = leave right away
+    HostRejoinWait: 75,
     StaleAfter: 300,
     SyncDifficulty: true,
     AssistRange: 12,
@@ -468,6 +471,8 @@
 
   let _lastOogWrite = 0;
   let _oogExtra = {};
+  /** the last game this entry script saw us in (the oog file forgets it once we're out) */
+  let _lastGame = { game: "", pass: "", diff: "", tick: 0 };
 
   /**
    * Called every loop of the entry script (both out of game and while in game). Throttled to 2s.
@@ -495,6 +500,7 @@
         pass = me.gamepassword || "";
         diff = DIFFS[me.diff] || "";
         charName = me.name || "";
+        game && (_lastGame = { game: game, pass: pass, diff: diff, tick: Date.now() });
       } catch (e) {
         inGame = false;
       }
@@ -552,6 +558,33 @@
 
   /** in-memory (per entry script) list of games we failed to join */
   const joinFails = {};
+
+  /**
+   * Out of game: we were hosting a game and got thrown out of it (chicken, death, disconnect) while the rest of
+   * the party is still in it, waiting for us. Go back into THAT game (as its host) instead of making a new one.
+   * @returns {{ game: string, pass: string, diff: string } | null}
+   */
+  Party.rejoinTarget = function () {
+    if (!enabled || !settings.HostRejoinWait || inGameNow()) return null;
+    if (!_lastGame.game || Date.now() - _lastGame.tick > Time.seconds(settings.HostRejoinWait + 30)) return null;
+    if ((joinFails[lc(_lastGame.game)] || 0) >= 2) return null;
+    try {
+      if (me.diedHardcore) return null;
+    } catch (e) {
+      // ignore
+    }
+    let g = Party.readGameFile(myProfile);
+    // we have to have been leading it, and not have ended it on purpose
+    if (!g || g.role !== "leader" || lc(g.game || "") !== lc(_lastGame.game)) return null;
+    if (["end", "left", "gone"].includes(g.phase) || (g.finishedGame && lc(g.finishedGame) === lc(g.game))) return null;
+    // somebody is still in there waiting for us
+    let waiting = members.some(function (m) {
+      if (m === myProfile) return false;
+      let o = Party.readOog(m);
+      return !!o && fresh(o, 20) && o.status === "ingame" && lc(o.game || "") === lc(_lastGame.game);
+    });
+    return waiting ? { game: _lastGame.game, pass: _lastGame.pass, diff: _lastGame.diff } : null;
+  };
 
   /**
    * Follower only - work out which game to join.
@@ -2462,8 +2495,12 @@
       const leaderHere = Party.inGame(leader);
 
       if (!ls || !leaderHere) {
-        !lostSince && (lostSince = getTickCount());
-        if (getTickCount() - lostSince > Time.seconds(settings.LeaderLostTimeout)) {
+        if (!lostSince) {
+          lostSince = getTickCount();
+          leaderLostLimit() > settings.LeaderLostTimeout
+            && log(leader + " dropped out of the game - waiting in town for it to come back", true);
+        }
+        if (getTickCount() - lostSince > Time.seconds(leaderLostLimit())) {
           log("Leader isn't in this game anymore, leaving", true);
           break;
         }
@@ -2471,6 +2508,9 @@
         !me.inTown && Town.goToTown();
         delay(1000);
         continue;
+      }
+      if (lostSince && getTickCount() - lostSince > Time.seconds(settings.LeaderLostTimeout)) {
+        log(leader + " is back", true);
       }
       lostSince = 0;
 
@@ -2654,6 +2694,28 @@
   };
 
   /**
+   * The leader isn't in the game: is it likely to come back (it was leading this game, didn't end it, and its bot
+   * is still running and not in some other game)? Then wait HostRejoinWait instead of LeaderLostTimeout.
+   * @returns {number} seconds to wait
+   */
+  const leaderLostLimit = function () {
+    if (!settings.HostRejoinWait) return settings.LeaderLostTimeout;
+    try {
+      let g = Party.readGameFile(leader);
+      if (!g || g.role !== "leader" || !sameGame(g.game)) return settings.LeaderLostTimeout;
+      if (["end", "left", "gone"].includes(g.phase) || (g.finishedGame && sameGame(g.finishedGame))) {
+        return settings.LeaderLostTimeout;
+      }
+      let o = Party.readOog(leader);
+      if (!o || !fresh(o, 30)) return settings.LeaderLostTimeout;
+      if (o.status === "ingame" && o.game && !sameGame(o.game)) return settings.LeaderLostTimeout;
+      return Math.max(settings.LeaderLostTimeout, settings.HostRejoinWait);
+    } catch (e) {
+      return settings.LeaderLostTimeout;
+    }
+  };
+
+  /**
    * Follower: if the leader leaves the game (chicken, death, crash, game over) we leave too and wait for the next one.
    * Runs from the background worker, so it works even in the middle of a script.
    */
@@ -2669,7 +2731,7 @@
     // only start counting once we've seen them in this game
     if (!_leaderSeenTick) return;
 
-    if (Date.now() - _leaderSeenTick > Time.seconds(settings.LeaderLostTimeout)) {
+    if (Date.now() - _leaderSeenTick > Time.seconds(leaderLostLimit())) {
       _leaderGone = true;
       Party.state.finishedGame = me.gamename || "";
       Party.state.phase = "left";

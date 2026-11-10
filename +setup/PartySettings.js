@@ -62,6 +62,13 @@
     LeaderLostTimeout: 10,
 
     /**
+     * @desc - when the HOST gets thrown out of the game (chicken, death, disconnect), the others wait this many
+     *   seconds in town for it instead of leaving: the host goes straight back into the same game and carries on
+     *   from the next step, so nobody starts the run over. 0 = everyone leaves right away (old behaviour).
+     */
+    HostRejoinWait: 75,
+
+    /**
      * @desc - a member that hasn't checked in for this many seconds is treated as offline
      *   (the leader won't wait for it and won't lower the difficulty for it)
      */

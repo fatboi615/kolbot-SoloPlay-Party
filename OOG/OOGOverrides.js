@@ -40,7 +40,8 @@ const LocationAction = {
 
   /** party followers never make games, they join the leader's */
   const openGameWindow = function () {
-    if (Party.isFollower) {
+    // followers join - and so does a host going back into the game it got thrown out of
+    if (Party.isFollower || Party.rejoinTarget()) {
       Starter.LocationEvents.openJoinGameWindow();
     } else {
       Starter.LocationEvents.openCreateGameWindow();
@@ -1044,7 +1045,7 @@ const LocationAction = {
     if (Starter.inGame || Starter.gameInfo.error) {
       !Starter.gameStart && (Starter.gameStart = DataFile.getStats().ingameTick);
 
-      if (getTickCount() - Starter.gameStart < Starter.Config.MinGameTime * 1e3 && !Party.isFollower) {
+      if (getTickCount() - Starter.gameStart < Starter.Config.MinGameTime * 1e3 && !Party.isFollower && !Party.rejoinTarget()) {
         ControlAction.timeoutDelay("Min game time wait", Starter.Config.MinGameTime * 1e3 + Starter.gameStart - getTickCount());
       }
     }
@@ -1181,7 +1182,8 @@ const LocationAction = {
     if (Starter.inGame || Starter.gameInfo.error) {
       !Starter.gameStart && (Starter.gameStart = DataFile.getStats().ingameTick);
 
-      if (getTickCount() - Starter.gameStart < Starter.Config.MinGameTime * 1e3 && !joinInfo && !Party.isFollower) {
+      if (getTickCount() - Starter.gameStart < Starter.Config.MinGameTime * 1e3 && !joinInfo && !Party.isFollower
+        && !Party.rejoinTarget()) {
         let _waitTime = Starter.Config.MinGameTime * 1e3 + Starter.gameStart - getTickCount();
         ControlAction.timeoutDelay("Min game time wait", _waitTime);
       }
@@ -1220,8 +1222,8 @@ const LocationAction = {
   });
 
   locations.set(sdk.game.locations.CreateGame, function (loc) {
-    if (Party.isFollower) {
-      // followers don't make games - back to the join tab
+    if (Party.isFollower || Party.rejoinTarget()) {
+      // followers don't make games (nor does a host going back into its game) - back to the join tab
       Controls.CancelCreateGame.click();
       Controls.JoinGameWindow.click();
       return;
@@ -1311,12 +1313,17 @@ const LocationAction = {
   let lastPartyJoin = "";
 
   locations.set(sdk.game.locations.JoinGame, function (loc) {
-    if (!Party.isFollower) {
+    // host thrown out of its game (chicken / death / disconnect) while the party waits in it: go back in
+    const rejoining = !Party.isFollower && !!Party.rejoinTarget();
+    if (!Party.isFollower && !rejoining) {
       Starter.LocationEvents.openCreateGameWindow();
       return;
     }
+    const pickTarget = function () {
+      return rejoining ? (Party.rejoinTarget() || { wait: "back to making games" }) : Party.getJoinTarget();
+    };
 
-    let target = Party.getJoinTarget();
+    let target = pickTarget();
 
     // last click didn't get us in game
     if (Starter.lastGameStatus === "pending") {
@@ -1326,7 +1333,12 @@ const LocationAction = {
         D2Bot.printToConsole("[Party] Failed to join " + lastPartyJoin + " (" + fails + "/3)", sdk.colors.D2Bot.Gold);
         ControlAction.timeoutDelay("Party join retry", Time.seconds(5));
       }
-      target = Party.getJoinTarget();
+      target = pickTarget();
+    }
+
+    if (rejoining && !target.game) {
+      Starter.LocationEvents.openCreateGameWindow();
+      return;
     }
 
     if (!target.game) {
@@ -1335,7 +1347,8 @@ const LocationAction = {
       return;
     }
 
-    D2Bot.updateStatus("Party :: Joining " + target.game + " (" + target.diff + ")");
+    D2Bot.updateStatus("Party :: " + (rejoining ? "Going back into my game " : "Joining ") + target.game + " (" + target.diff + ")");
+    rejoining && D2Bot.printToConsole("[Party] Going back into " + target.game + " - the party is waiting there", sdk.colors.D2Bot.Gold);
     me.blockMouse = true;
 
     try {
@@ -1343,7 +1356,8 @@ const LocationAction = {
       Controls.JoinGamePass.setText(target.pass);
       delay(250);
       lastPartyJoin = target.game;
-      Party.markHosting(false);
+      // going back into our own game: we're still its host
+      Party.markHosting(rejoining);
       Controls.JoinGame.click();
       Starter.lastGameStatus = "pending";
     } finally {

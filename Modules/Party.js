@@ -1582,6 +1582,28 @@
       return ok;
     }
 
+    // Tal Rasha's Tomb -> Duriel's Lair is a hole in the floor (an object), not an exit: the helpers stood in the
+    // tomb until a portal came up and arrived after the fight had started without them
+    if (area === sdk.areas.DurielsLair && me.area >= sdk.areas.TalRashasTomb1 && me.area <= sdk.areas.TalRashasTomb7) {
+      try {
+        me.overhead("Party: following into Duriel's Lair");
+        let hole = Game.getObject(sdk.objects.PortaltoDurielsLair);
+        if (!hole) {
+          Pather.moveToPreset(me.area, sdk.unittype.Object, sdk.objects.HoradricStaffHolder, 0, 0, true);
+          hole = Misc.poll(function () {
+            return Game.getObject(sdk.objects.PortaltoDurielsLair);
+          }, 3000, 200);
+        }
+        hole && Pather.useUnit(sdk.unittype.Object, sdk.objects.PortaltoDurielsLair, sdk.areas.DurielsLair);
+        ok = me.inArea(sdk.areas.DurielsLair);
+        ok && console.log("ÿc8[Party]ÿc0 followed into " + getAreaName(area));
+      } catch (e) {
+        ok = false;
+      }
+      if (!ok) delay(500); // not open yet (staff not placed) - wait by it
+      return ok;
+    }
+
     try {
       // can we walk there from here (next door) or waypoint there?
       let nextDoor = false;
@@ -1681,8 +1703,10 @@
         delay(1000);
         return false;
       }
-      // walking there from town already failed in this game (closed route): only a portal will do
-      if (!ok && _walkFailed[area] && me.inTown && !haveWp && !me.inArea(area)) {
+      // walking there already failed in this game (closed route, or a place you only reach by portal like the
+      // Arcane Sanctuary): only a party portal will do - wait for it in town
+      if (!ok && _walkFailed[area] && getTickCount() - _walkFailed[area] < Time.minutes(3) && !haveWp && !me.inArea(area)) {
+        (!me.inTown || me.act !== areaAct) && Town.goToTown(areaAct);
         me.overhead("Party: waiting in town for a portal to " + getAreaName(area));
         Town.move("portalspot");
         delay(1000);
@@ -1690,14 +1714,13 @@
       }
 
       if (!ok && !me.inArea(area)) {
-        const fromTown = me.inTown && !haveWp;
+        const noWp = !haveWp;
         try {
           Pather.journeyTo(area);
         } finally {
-          if (fromTown && !me.inArea(area)) {
-            _walkFailed[area] = true;
-            log("Can't walk to " + getAreaName(area) + " from town - waiting for a portal from now on", true);
-            !me.inTown && Town.goToTown();
+          if (noWp && !me.inArea(area)) {
+            _walkFailed[area] = getTickCount();
+            log("Can't walk to " + getAreaName(area) + " - waiting in town for a portal for a few minutes", true);
           }
         }
       }
@@ -3016,8 +3039,14 @@
             // still need it but the boss already died in this game (we were in town, too far...)? running it
             // again only walks the whole area for nothing - try again next game
             if (stillNeed && bossQuests.includes(ls.script)) {
-              log(me.name + " missed the " + ls.script + " kill - it's dead in this game, trying again next game");
-              noteAttempt(ls.script);
+              if (ls.script === "smith") {
+                // only one hammer drops per game, so only one of us can finish this each game - not a failed try
+                // (two of those used to send a member off to solo games)
+                log(me.name + " still needs the smith's hammer - one per game, its turn comes in a later game");
+              } else {
+                log(me.name + " missed the " + ls.script + " kill - it's dead in this game, trying again next game");
+                noteAttempt(ls.script);
+              }
               stillNeed = false;
             }
             // still need it after that (no quest credit, etc)? run it ourselves, leader will come help

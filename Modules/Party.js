@@ -402,6 +402,8 @@
       soloGame: (data && data.soloGame) || "",
       soloStarted: (data && data.soloStarted) || 0,
       soloSince: (data && data.soloSince) || 0,
+      // quests we gave up on after the catch-up games didn't get them done ("script@difficulty") - not tried again
+      giveUp: (data && Array.isArray(data.giveUp)) ? data.giveUp : [],
     };
   };
 
@@ -1271,7 +1273,18 @@
    * pure farming/leveling runs never count as "not done".
    * @param {string} script
    */
+  let _giveUpCache = { tick: 0, list: [] };
+  const gaveUp = function (script) {
+    try {
+      if (Date.now() - _giveUpCache.tick > 5000) _giveUpCache = { tick: Date.now(), list: Party.readStuck().giveUp };
+      return _giveUpCache.list.indexOf(script + "@" + me.diff) > -1;
+    } catch (e) {
+      return false;
+    }
+  };
+
   const questNotDone = function (script) {
+    if (gaveUp(script)) return false;
     let flag = questFlags[script];
     if (flag) {
       try {
@@ -1351,6 +1364,20 @@
    * 45 minutes, then back to the party whatever happened.
    * @returns {boolean} true when the catch-up is over and we should leave this game for the party's
    */
+  /** the quests still stuck when catch-up ends: add them to the give-up list (this difficulty) so it doesn't start over */
+  const giveUpList = function (data) {
+    let list = data.giveUp.slice();
+    Object.keys(data.scripts).forEach(function (s) {
+      let key = s + "@" + me.diff;
+      if (data.scripts[s] >= settings.CatchUpAfterFails && list.indexOf(key) === -1) {
+        list.push(key);
+        log(me.name + " gives up on " + s + " for this difficulty - it won't send us off to solo games again", true);
+      }
+    });
+    _giveUpCache = { tick: 0, list: [] };
+    return list;
+  };
+
   Party.catchUpGameStarted = function () {
     try {
       let data = Party.readStuck();
@@ -1363,7 +1390,7 @@
       if (data.soloStarted > limit || Date.now() - data.soloSince > Time.minutes(45)) {
         log(me.name + " played " + (data.soloStarted - 1) + " solo catch-up games without finishing "
           + Object.keys(data.scripts).join(", ") + " - back to the party", true);
-        writeStuck({ scripts: {}, catchUpGames: 0, avoid: data.avoid });
+        writeStuck({ scripts: {}, catchUpGames: 0, avoid: data.avoid, giveUp: giveUpList(data) });
         _catchUpCache = { tick: 0, value: false };
         return true;
       }
@@ -1411,10 +1438,10 @@
     });
     if (!left.length) {
       log(me.name + " is caught up - rejoining the party next game", true);
-      data = { scripts: {}, catchUpGames: 0, avoid: data.avoid };
+      data = { scripts: {}, catchUpGames: 0, avoid: data.avoid, giveUp: data.giveUp };
     } else if (data.catchUpGames >= settings.MaxCatchUpGames) {
       log(me.name + " still stuck on " + left.join(", ") + " after " + data.catchUpGames + " solo games - rejoining the party anyway", true);
-      data = { scripts: {}, catchUpGames: 0, avoid: data.avoid };
+      data = { scripts: {}, catchUpGames: 0, avoid: data.avoid, giveUp: giveUpList(data) };
     } else {
       log(me.name + " still catching up on " + left.join(", ") + " (solo game " + data.catchUpGames + "/" + settings.MaxCatchUpGames + ")", true);
     }

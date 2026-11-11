@@ -1213,6 +1213,15 @@
       Town.npcInteract(info.npc);
       me.cancel();
       delay(500);
+      if (script === "radament") {
+        // the book is what the quest is for (skill points) - the script reads it right after talking to atma
+        let book = me.getItem(sdk.items.quest.BookofSkill);
+        if (book) {
+          book.isInStash && Town.openStash() && delay(300);
+          book.use() && delay(500);
+          typeof AutoSkill !== "undefined" && AutoSkill.init(Config.AutoSkill.Build, Config.AutoSkill.Save);
+        }
+      }
       log(me.name + " collected " + script + " reward from " + info.npc);
       return true;
     } catch (e) {
@@ -1301,7 +1310,13 @@
   const noteAttempt = function (script) {
     if (!isFollower || !questScripts.includes(script)) return;
     let data = Party.readStuck();
-    if (questStillNotDone(script)) {
+    let notDone = questStillNotDone(script);
+    // we killed it but the script's own "talk to the npc" step ran on stale quest state (it only talks when the
+    // state already says ready) - go and collect the reward now, then look again
+    if (notDone && rewardTalks[script] && collectReward(script)) {
+      notDone = questStillNotDone(script);
+    }
+    if (notDone) {
       // the host already fought (and went down in) this one earlier in this game: the boss was dead or half
       // dead when our turn came - not a real try
       try {

@@ -2394,19 +2394,22 @@
     let step = _resumeStep || 0;
     // restarted mid-game: what we already ran here, and what we went down in (see initInGame). Saved in the game
     // file so the next restart knows too.
-    const ranHere = new Set(_resumeRan);
+    // plain arrays, not Sets: D2BS's engine can't Array.from() a Set (it came out empty, so nothing was remembered)
+    const ranHere = _resumeRan.slice(0);
     const diedIn = Object.assign({}, _resumeDied);
-    const toldSkip = new Set();
-    Party.state.ranHere = Array.from(ranHere);
+    const toldSkip = [];
+    Party.state.ranHere = ranHere.slice(0);
     Party.state.diedIn = diedIn;
     /** @param {string} s @param {number} pass */
     const skipHere = function (s, pass) {
       if ((diedIn[s] || 0) >= 2) {
-        !toldSkip.has(s) && toldSkip.add(s) && log("Skipping " + s + " for the rest of this game - went down in it "
-          + diedIn[s] + " times", true);
+        if (toldSkip.indexOf(s) === -1) {
+          toldSkip.push(s);
+          log("Skipping " + s + " for the rest of this game - went down in it " + diedIn[s] + " times", true);
+        }
         return true;
       }
-      return pass === 1 && ranHere.has(s);
+      return pass === 1 && ranHere.indexOf(s) > -1;
     };
     let stop = false;
 
@@ -2515,8 +2518,8 @@
         }
 
         Party.state.doneStep = step;
-        ranHere.add(script);
-        Party.state.ranHere = Array.from(ranHere);
+        ranHere.indexOf(script) === -1 && ranHere.push(script);
+        Party.state.ranHere = ranHere.slice(0);
         Party.writeGame();
 
         // 4. wait for (and help) everyone else that is running it

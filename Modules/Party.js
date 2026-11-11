@@ -1219,7 +1219,7 @@
   const noteAttempt = function (script) {
     if (!isFollower || !questScripts.includes(script)) return;
     let data = Party.readStuck();
-    if (questNotDone(script)) {
+    if (questStillNotDone(script)) {
       data.scripts[script] = (data.scripts[script] || 0) + 1;
       log(me.name + " failed " + script + " in a party game (" + data.scripts[script] + "/" + settings.CatchUpAfterFails + ")", true);
       if (data.scripts[script] >= settings.CatchUpAfterFails) {
@@ -1545,6 +1545,8 @@
    */
   /** waiting in town for a party portal to this area since (see travelTo) */
   let _portalWait = { area: 0, since: 0 };
+  /** areas we couldn't walk to from town in this game */
+  const _walkFailed = {};
 
   const travelTo = function (area, name, rally) {
     if (_portalWait.area !== area) _portalWait = { area: area, since: 0 };
@@ -1668,8 +1670,33 @@
         }
       }
 
+      // an act we haven't unlocked: there is no way there. Wait in town (trying anyway blocked the leader for
+      // minutes at a time, walking into a wall)
+      if (!ok && !canReachAct && !me.inArea(area)) {
+        me.overhead("Party: can't go to act " + areaAct + " yet - waiting in town");
+        !me.inTown && Town.goToTown();
+        delay(1000);
+        return false;
+      }
+      // walking there from town already failed in this game (closed route): only a portal will do
+      if (!ok && _walkFailed[area] && me.inTown && !haveWp && !me.inArea(area)) {
+        me.overhead("Party: waiting in town for a portal to " + getAreaName(area));
+        Town.move("portalspot");
+        delay(1000);
+        return false;
+      }
+
       if (!ok && !me.inArea(area)) {
-        Pather.journeyTo(area);
+        const fromTown = me.inTown && !haveWp;
+        try {
+          Pather.journeyTo(area);
+        } finally {
+          if (fromTown && !me.inArea(area)) {
+            _walkFailed[area] = true;
+            log("Can't walk to " + getAreaName(area) + " from town - waiting for a portal from now on", true);
+            !me.inTown && Town.goToTown();
+          }
+        }
       }
     } catch (e) {
       console.warn("Party :: travel to " + getAreaName(area) + " failed - " + (e.message || e));

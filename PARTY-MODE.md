@@ -30,7 +30,18 @@ This also fixes quests that only work in a game made by someone who hasn't done 
 ### Taxi
 A follower that can **teleport** (a sorc) is the party's taxi. At the start of each quest whose area has no waypoint (Catacombs 4, Radament's sewers, Durance 3, Chaos Sanctuary, Throne...), it teleports there, opens a town portal and comes back through it. Everyone else waits in town (up to `TaxiWait` seconds) and takes that portal instead of walking - including when they're only helping the taxi with its own quest, so nobody chases it area by area. When the taxi runs that quest itself, it doesn't come back: it waits by its portal and starts the quest from there, without the usual trip to town and second teleport down. If the taxi can't make it, they carry on like normal.
 
-### Rush (new characters catch up fast)
+### Sharing runes
+
+At the start of a game, each member posts which runes it still needs for a runeword it has the base for, and which runes it carries but has no use for. If one member's spare is another's missing rune, both walk to the act 1 stash, the giver drops the rune and the other picks it up - then SoloPlay makes the runeword as usual.
+
+- A member never gives away a rune that is part of any runeword it is set up to make itself, or one set aside for a cube recipe.
+- If two members need the same rune, it goes to the one with the fewest runes missing.
+- The giver only drops once the taker is standing there, and takes the rune back if it isn't picked up.
+- Every hand-off is in the console: "Sharing runes: ...", "Gave ... a Lem rune", "Got a Lem rune from ...".
+
+Turn it off with `ShareRunes: false`.
+
+## Rush (new characters catch up fast)
 Add a brand new character to a party that's already ahead and it doesn't have to walk every act. When the member furthest behind is at least `RushWhenBehindActs` acts behind everyone else (or everyone else is in a later difficulty), **that character makes the game and the party's teleporter (sorc) rushes it** through the quests it still needs - staff, Summoner, Duriel, Travincal, Mephisto, Diablo - up to the act the rest of the party is in.
 
 - The new character **makes the game on purpose**: quest objects (Tal Rasha's tomb, the Travincal orb, the Durance) follow the game maker, so the one being rushed has to host - otherwise it can't get through the boss portals. This is how kolbot's own rush is built too.
@@ -111,6 +122,7 @@ Diablo II 1.14d can't scale its window; stretching add-ons like cnc-ddraw rescal
 | `MaxWaitSeconds` | 8 | Longest catch-up pause (only right after a move) |
 | `HostRotation` | true | Furthest-behind member hosts the games, everyone joins to catch it up |
 | `MakeWay` | true | Helpers right next to a leader that keeps failing to move step behind it for a few seconds (narrow walkways, doors) |
+| `ShareRunes` | true | Members hand each other runes someone needs for a runeword (see Sharing runes) |
 | `Rush` | true | The party's teleporter rushes a far-behind member through the act bosses |
 | `RushWhenBehindActs` | 1 | How many acts behind (another difficulty = always) before rushing |
 | `RushStepMinutes` | 5 | Minutes per boss before a rush counts as stuck and the rush game ends. 0 = no limit |

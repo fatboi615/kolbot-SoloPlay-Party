@@ -106,6 +106,12 @@
     MakeWay: true,
 
     /**
+     * @desc - members hand each other runes: a rune one member needs for a runeword (and its owner has no use for)
+     *   is dropped by the act 1 stash at the start of a game for the one who needs it
+     */
+    ShareRunes: true,
+
+    /**
      * @desc - when there is no shared target, helpers only clear monsters this close to them (yards).
      *   Keep it small so they don't wander off from the person they are following.
      */

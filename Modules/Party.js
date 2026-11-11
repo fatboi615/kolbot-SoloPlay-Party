@@ -48,6 +48,9 @@
     FollowDistance: 7,
     // followers right next to a leader whose move keeps failing step behind it (narrow walkways, doors)
     MakeWay: true,
+    // members hand each other runes: one that somebody needs for a runeword (and its owner doesn't) is dropped in
+    // town at the start of a game for the one who needs it
+    ShareRunes: true,
     LeaderLedScripts: true,
     LeaderPortals: true,
     LeaderWaits: true,
@@ -2374,6 +2377,255 @@
   // Leader loop
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 
+
+  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+  // Sharing runes
+  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+
+  const RUNE_NAMES = [
+    "El", "Eld", "Tir", "Nef", "Eth", "Ith", "Tal", "Ral", "Ort", "Thul", "Amn", "Sol", "Shael", "Dol", "Hel", "Io",
+    "Lum", "Ko", "Fal", "Lem", "Pul", "Um", "Mal", "Ist", "Gul", "Vex", "Ohm", "Lo", "Sur", "Ber", "Jah", "Cham", "Zod",
+  ];
+  /** @param {number} classid */
+  const runeName = function (classid) {
+    let n = RUNE_NAMES[classid - sdk.items.runes.El];
+    return n ? n + " rune" : "rune " + classid;
+  };
+
+  /** runes we still need for a runeword we have the base for (SoloPlay's own list) */
+  const myRuneWants = function () {
+    try {
+      if (!Config.MakeRunewords) return [];
+      Runewords.buildLists();
+      return Array.isArray(Runewords.needList) ? Runewords.needList.slice(0, 12) : [];
+    } catch (e) {
+      return [];
+    }
+  };
+
+  /**
+   * Runes we carry and have no use for: not part of any runeword we're set up to make, not set aside for a
+   * runeword or a cube recipe.
+   * @returns {ItemUnit[]}
+   */
+  const mySpareRuneItems = function () {
+    try {
+      const own = {};
+      (Config.Runewords || []).forEach(function (rw) {
+        rw && rw[0] && Array.isArray(rw[0].runes) && rw[0].runes.forEach(function (r) {
+          own[r] = true;
+        });
+      });
+      const wanted = myRuneWants();
+      const cubeNeeds = (typeof Cubing !== "undefined" && Array.isArray(Cubing.neededIngredients))
+        ? Cubing.neededIngredients.map(function (i) {
+          return i.classid;
+        })
+        : [];
+      return (me.findItems(-1, sdk.items.mode.inStorage) || []).filter(function (item) {
+        if (item.itemType !== sdk.items.type.Rune) return false;
+        if (own[item.classid] || wanted.indexOf(item.classid) > -1 || cubeNeeds.indexOf(item.classid) > -1) return false;
+        if (Runewords.validGids.indexOf(item.gid) > -1) return false;
+        if (typeof Cubing !== "undefined" && Cubing.keepItem(item)) return false;
+        return true;
+      });
+    } catch (e) {
+      return [];
+    }
+  };
+
+  /** put what we need and what we can spare in our game file */
+  const publishRunes = function () {
+    if (!settings.ShareRunes) return;
+    Party.state.runeWants = myRuneWants();
+    Party.state.runeSpares = mySpareRuneItems().map(function (i) {
+      return i.classid;
+    }).slice(0, 20);
+  };
+
+  /**
+   * Leader: who gives which rune to whom. A rune goes to the member closest to finishing (fewest runes missing).
+   * @returns {{ from: string, to: string, classid: number }[]}
+   */
+  const planRuneTrades = function () {
+    const info = {};
+    const here = [myProfile].concat(Party.activeFollowers());
+    here.forEach(function (m) {
+      let g = m === myProfile ? Party.state : Party.readGame(m);
+      if (!g) return;
+      info[m] = {
+        wants: Array.isArray(g.runeWants) ? g.runeWants.slice(0) : [],
+        spares: Array.isArray(g.runeSpares) ? g.runeSpares.slice(0) : [],
+      };
+    });
+    const trades = [];
+    here.forEach(function (giver) {
+      if (!info[giver]) return;
+      info[giver].spares.forEach(function (classid) {
+        if (trades.length >= 6) return;
+        let to = "";
+        here.forEach(function (m) {
+          if (m === giver || !info[m] || info[m].wants.indexOf(classid) === -1) return;
+          if (!to || info[m].wants.length < info[to].wants.length) to = m;
+        });
+        if (!to) return;
+        info[to].wants.splice(info[to].wants.indexOf(classid), 1);
+        trades.push({ from: giver, to: to, classid: classid });
+      });
+    });
+    return trades;
+  };
+
+  /** @param {number} classid */
+  const groundRune = function (classid) {
+    let item = Game.getItem(classid, sdk.items.mode.onGround);
+    if (item) {
+      do {
+        if (item.distance < 15) return copyUnit(item);
+      } while (item.getNext());
+    }
+    return null;
+  };
+
+  /** @param {number} classid */
+  const countRune = function (classid) {
+    return (me.findItems(classid, sdk.items.mode.inStorage) || []).length;
+  };
+
+  /**
+   * Everyone: do our part of the leader's rune hand-offs. Each hand-off: both stand by the act 1 stash, the giver
+   * drops the rune only once the taker is there, and takes it back if it isn't picked up.
+   * @param {{ from: string, to: string, classid: number }[]} trades
+   * @param {number} id
+   */
+  const tradeRound = function (trades, id) {
+    const done = function () {
+      Party.state.tradeDone = id;
+      Party.state.tradeAt = "";
+      Party.writeGame();
+    };
+    let mine = [];
+    trades.forEach(function (t, n) {
+      (t.from === myProfile || t.to === myProfile) && mine.push({ t: t, key: id + ":" + n });
+    });
+    if (!mine.length) return done();
+
+    try {
+      (!me.inTown || me.act !== 1) && Town.goToTown(1);
+      Town.move("stash");
+    } catch (e) {
+      return done();
+    }
+    /** @param {string} who @param {string} field @param {string} key @param {boolean} [near] */
+    const theyAre = function (who, field, key, near) {
+      let g = Party.readGame(who);
+      if (!g || g[field] !== key) return false;
+      return !near || (g.area === me.area && getDistance(me, g.x, g.y) < 15);
+    };
+
+    mine.forEach(function (m) {
+      const t = m.t;
+      const giving = t.from === myProfile;
+      const other = giving ? t.to : t.from;
+      const otherName = Party.charNameOf(other) || other;
+      const name = runeName(t.classid);
+      try {
+        Party.state.tradeAt = m.key;
+        Party.writeGame();
+        if (giving) {
+          me.overhead("Party: giving " + name + " to " + otherName);
+          if (!Misc.poll(function () {
+            return theyAre(other, "tradeAt", m.key, true);
+          }, 30000, 250)) {
+            log(otherName + " didn't come for the " + name + " - keeping it", true);
+            return;
+          }
+          let item = mySpareRuneItems().filter(function (i) {
+            return i.classid === t.classid;
+          })[0];
+          if (!item) return;
+          let dropped = item.drop();
+          me.cancelUIFlags();
+          if (!dropped) {
+            log("Couldn't drop the " + name + " for " + otherName, true);
+            return;
+          }
+          Party.state.tradeDrop = m.key;
+          Party.writeGame();
+          let taken = Misc.poll(function () {
+            return theyAre(other, "tradeGot", m.key);
+          }, 12000, 250);
+          if (taken) {
+            log("Gave " + otherName + " a " + name + " for its runeword", true);
+          } else {
+            let back = groundRune(t.classid);
+            back && Pickit.pickItem(back, Pickit.Result.WANTED, "party share");
+            log(otherName + " didn't pick up the " + name + (back ? " - took it back" : ""), true);
+          }
+        } else {
+          me.overhead("Party: getting " + name + " from " + otherName);
+          if (!Misc.poll(function () {
+            return theyAre(other, "tradeDrop", m.key);
+          }, 45000, 250)) return;
+          const before = countRune(t.classid);
+          let unit = Misc.poll(function () {
+            return groundRune(t.classid);
+          }, 3000, 200);
+          unit && Pickit.pickItem(unit, Pickit.Result.WANTED, "party share");
+          if (countRune(t.classid) > before) {
+            Party.state.tradeGot = m.key;
+            Party.writeGame();
+            log("Got a " + name + " from " + otherName, true);
+          }
+        }
+      } catch (e) {
+        console.warn("Party :: rune hand-off failed - " + (e.message || e));
+      }
+    });
+    try {
+      me.cancelUIFlags();
+      publishRunes();
+    } catch (e) {
+      // ignore
+    }
+    done();
+  };
+
+  /** Leader, at the start of a game: plan the hand-offs, do ours, wait for the others to finish theirs */
+  const shareRunes = function () {
+    if (!settings.ShareRunes || !me.inTown) return;
+    try {
+      publishRunes();
+      Party.writeGame();
+      const trades = planRuneTrades();
+      if (!trades.length) return;
+      const id = Date.now();
+      log("Sharing runes: " + trades.map(function (t) {
+        return (Party.charNameOf(t.from) || t.from) + " gives " + (Party.charNameOf(t.to) || t.to) + " a " + runeName(t.classid);
+      }).join(", "), true);
+      Object.assign(Party.state, { phase: "trade", trades: trades, tradeId: id });
+      Party.writeGame();
+      tradeRound(trades, id);
+      const involved = [];
+      trades.forEach(function (t) {
+        [t.from, t.to].forEach(function (m) {
+          m !== myProfile && involved.indexOf(m) === -1 && involved.push(m);
+        });
+      });
+      Misc.poll(function () {
+        return involved.every(function (m) {
+          let g = Party.readGame(m);
+          return !g || g.tradeDone === id || !Party.inGame(m);
+        });
+      }, 90000, 500);
+    } catch (e) {
+      console.warn("Party :: rune sharing failed - " + (e.message || e));
+    } finally {
+      Object.assign(Party.state, { phase: "", trades: [] });
+      Party.writeGame();
+    }
+  };
+
   const runLeader = function () {
     // who is online and should show up
     const expected = followers.filter(function (f) {
@@ -2416,6 +2668,9 @@
     } else {
       log("No followers online, playing like solo but still in party mode", true);
     }
+
+    // hand each other the runes somebody needs (not after a mid-game restart - that was done at the start)
+    !_resumeStep && Party.activeFollowers().length && shareRunes();
 
     // nobody came because the party is in another member's game (both of us decided to host): go join them
     // rather than play alone - one party, one game
@@ -2596,6 +2851,7 @@
     let handledRun = 0;
     let lostSince = 0;
     let orphanSince = 0;
+    let handledTrade = 0;
 
     const leaderState = function () {
       let info = Party.readGameFile(leader);
@@ -2683,6 +2939,13 @@
       if (ls.phase === "end") {
         log("Leader ended the game");
         break;
+      }
+
+      // the leader planned rune hand-offs: do our part
+      if (ls.phase === "trade" && ls.tradeId && ls.tradeId !== handledTrade && Array.isArray(ls.trades)) {
+        handledTrade = ls.tradeId;
+        tradeRound(ls.trades, ls.tradeId);
+        continue;
       }
 
       // the one we follow isn't leading this game (it's following someone too): nobody is. Leave instead of
@@ -3552,6 +3815,11 @@
       return true;
     }
 
+    try {
+      publishRunes();
+    } catch (e) {
+      // ignore
+    }
     Party.state.ready = true;
     Party.writeGame();
 

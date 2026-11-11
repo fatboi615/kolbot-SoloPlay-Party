@@ -398,6 +398,10 @@
       catchUpGames: (data && data.catchUpGames) || 0,
       // runs we (as host) keep going down in: script -> host games left to stay out of it
       avoid: (data && data.avoid) || {},
+      // solo catch-up bookkeeping, counted when a solo game STARTS (most of them end in a chicken, not a clean end)
+      soloGame: (data && data.soloGame) || "",
+      soloStarted: (data && data.soloStarted) || 0,
+      soloSince: (data && data.soloSince) || 0,
     };
   };
 
@@ -1298,6 +1302,17 @@
     if (!isFollower || !questScripts.includes(script)) return;
     let data = Party.readStuck();
     if (questStillNotDone(script)) {
+      // the host already fought (and went down in) this one earlier in this game: the boss was dead or half
+      // dead when our turn came - not a real try
+      try {
+        let ls = Party.readGame(leader);
+        if (ls && ls.diedIn && ls.diedIn[script]) {
+          log(me.name + " :: " + script + " isn't done, but the host went down in it earlier this game - not counted", true);
+          return;
+        }
+      } catch (e) {
+        // ignore
+      }
       data.scripts[script] = (data.scripts[script] || 0) + 1;
       log(me.name + " failed " + script + " in a party game (" + data.scripts[script] + "/" + settings.CatchUpAfterFails + ")", true);
       if (data.scripts[script] >= settings.CatchUpAfterFails) {
@@ -1315,6 +1330,36 @@
    * Call at the end of a solo catch-up game (SoloPlay.js). Clears quests that are done now and
    * sends us back to the party when nothing is left (or we've tried too many games).
    */
+  /**
+   * A solo catch-up game is starting. Solo games used to be counted only when they ended cleanly - in Hell they
+   * end in a chicken, so a member could play alone for hours. Now: at most MaxCatchUpGames (2 in Hell) or
+   * 45 minutes, then back to the party whatever happened.
+   * @returns {boolean} true when the catch-up is over and we should leave this game for the party's
+   */
+  Party.catchUpGameStarted = function () {
+    try {
+      let data = Party.readStuck();
+      if (!Object.keys(data.scripts).length) return false;
+      if (data.soloGame === me.gamename) return false; // our scripts restarting inside the same game
+      data.soloGame = me.gamename;
+      data.soloStarted += 1;
+      !data.soloSince && (data.soloSince = Date.now());
+      const limit = me.diff === sdk.difficulty.Hell ? Math.min(2, settings.MaxCatchUpGames) : settings.MaxCatchUpGames;
+      if (data.soloStarted > limit || Date.now() - data.soloSince > Time.minutes(45)) {
+        log(me.name + " played " + (data.soloStarted - 1) + " solo catch-up games without finishing "
+          + Object.keys(data.scripts).join(", ") + " - back to the party", true);
+        writeStuck({ scripts: {}, catchUpGames: 0, avoid: data.avoid });
+        _catchUpCache = { tick: 0, value: false };
+        return true;
+      }
+      log(me.name + " solo catch-up game " + data.soloStarted + "/" + limit + " for " + Object.keys(data.scripts).join(", "), true);
+      writeStuck(data);
+    } catch (e) {
+      // ignore
+    }
+    return false;
+  };
+
   Party.afterCatchUpGame = function () {
     if (!enabled || isLeader) return;
     let data = Party.readStuck();
@@ -1334,10 +1379,10 @@
     });
     if (!left.length) {
       log(me.name + " is caught up - rejoining the party next game", true);
-      data = { scripts: {}, catchUpGames: 0 };
+      data = { scripts: {}, catchUpGames: 0, avoid: data.avoid };
     } else if (data.catchUpGames >= settings.MaxCatchUpGames) {
       log(me.name + " still stuck on " + left.join(", ") + " after " + data.catchUpGames + " solo games - rejoining the party anyway", true);
-      data = { scripts: {}, catchUpGames: 0 };
+      data = { scripts: {}, catchUpGames: 0, avoid: data.avoid };
     } else {
       log(me.name + " still catching up on " + left.join(", ") + " (solo game " + data.catchUpGames + "/" + settings.MaxCatchUpGames + ")", true);
     }

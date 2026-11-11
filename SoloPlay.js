@@ -384,6 +384,10 @@ function main () {
   if (SoloParty.enabled) {
     // party mode handles the script list (and retries) together with the other members
     SoloParty.run();
+  } else if (SoloParty.inCatchUp() && SoloParty.catchUpGameStarted()) {
+    // solo catch-up is over (too many games / too long) - leave this game and rejoin the party
+    scriptBroadcast("quit");
+    delay(5000);
   } else {
     Loader.run();
     // we have scripts to retry so lets run them

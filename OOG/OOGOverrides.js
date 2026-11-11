@@ -501,6 +501,12 @@ const LocationAction = {
 
           break;
         case sdk.game.locations.OkCenteredErrorPopUp:
+          if (Starter.triedProfileAccount) {
+            // making the account from the profile's own name failed - leave the profile alone
+            Controls.OkCentered.click();
+
+            return false;
+          }
           info.account = "";
           info.password = "";
           D2Bot.setProfile(info.account, info.password);
@@ -863,6 +869,33 @@ const LocationAction = {
 
         break;
       case getLocaleString(5208): // Invalid account
+        // the account in the manager profile doesn't exist yet: make it with that name and password (the
+        // character is made right after, from the profile's character name) instead of throwing the name away
+        if (Starter.Config.MakeAccountFromProfile !== false && !Starter.triedProfileAccount
+          && Starter.profileInfo.account && Starter.profileInfo.password) {
+          Starter.triedProfileAccount = true;
+          D2Bot.updateStatus("Creating account " + Starter.profileInfo.account);
+          D2Bot.printToConsole(
+            "Account " + Starter.profileInfo.account + " doesn't exist yet - creating it from the profile settings",
+            sdk.colors.D2Bot.Gold
+          );
+          Controls.LoginErrorOk.click();
+          delay(500);
+          if (ControlAction.makeAccount(Starter.profileInfo)) {
+            DataFile.updateStats("AcctName", Starter.profileInfo.account);
+            DataFile.updateStats("AcctPswd", Starter.profileInfo.password);
+            D2Bot.printToConsole("Created account " + Starter.profileInfo.account, sdk.colors.D2Bot.Gold);
+            return;
+          }
+          D2Bot.printToConsole(
+            "Couldn't create account " + Starter.profileInfo.account
+            + " - check the name and password in the profile (2-15 characters, letters and numbers). Profile left as it is.",
+            sdk.colors.D2Bot.Red
+          );
+          D2Bot.stop();
+
+          break;
+        }
         D2Bot.updateStatus("Invalid Account Name");
         D2Bot.printToConsole("Invalid Account Name :: " + Starter.profileInfo.account);
         Starter.profileInfo.account = "";
@@ -883,6 +916,13 @@ const LocationAction = {
         }
         D2Bot.updateStatus("Account name already exists :: " + Starter.profileInfo.account);
         D2Bot.printToConsole("Account name already exists :: " + Starter.profileInfo.account);
+        if (Starter.triedProfileAccount) {
+          // the name from the profile is taken (or its password is wrong) - don't wipe what the user typed
+          D2Bot.printToConsole("Pick another account name in the profile, or fix its password.", sdk.colors.D2Bot.Red);
+          D2Bot.stop();
+
+          break;
+        }
         Starter.profileInfo.account = "";
         Starter.profileInfo.password = "";
         D2Bot.setProfile(Starter.profileInfo.account, Starter.profileInfo.password);

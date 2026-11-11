@@ -41,6 +41,37 @@ At the start of a game, each member posts which runes it still needs for a runew
 
 Turn it off with `ShareRunes: false`.
 
+## Starting a new group from nothing
+
+You don't have to make accounts or characters by hand. In the manager, give each profile the account name, password and character name you want and name the profile by class as usual (`SCL-PAL`, `SCL-SORC`...). On first start, if the account doesn't exist it is created with that name and password, and if the character isn't on it, it is created with that name. If the account name is already taken by someone else (or the password is wrong) the profile stops with a message and your profile settings are left alone. `MakeAccountFromProfile: false` in `OOG/StarterConfig.js` turns this off.
+
+## When the host keeps dying
+
+- The host comes back into the same game after a chicken, a death or a crash, and carries on with the next run.
+- A run it went down in twice in one game is skipped for the rest of that game.
+- For its next `DangerCooldownGames` games it doesn't lead that run: another member who needs it runs it with the host following, or it is left out.
+
+## Party commands
+
+Double-click `Party Command.bat` and type one of:
+
+| Command | What it does |
+|---|---|
+| `end` | End this game after the current run |
+| `skip tristram` | Leave a run out, every game, until you unskip it |
+| `unskip tristram` | Put it back |
+| `status` | Print what the party is doing in the host's console |
+
+The host reads the command after its current run.
+
+## Game report
+
+At the end of each game the host prints one line - minutes, runs done, runs left out, how often the host had to come back, members - and adds a row to `d2bs/kolbot/logs/party-report.csv`, so you can see over a day which games went well.
+
+## Stall safety net
+
+If nobody in the game has moved or made progress for `StallMinutes`, each member leaves and the party starts a fresh game. It's there for the stalls nobody thought of.
+
 ## Rush (new characters catch up fast)
 Add a brand new character to a party that's already ahead and it doesn't have to walk every act. When the member furthest behind is at least `RushWhenBehindActs` acts behind everyone else (or everyone else is in a later difficulty), **that character makes the game and the party's teleporter (sorc) rushes it** through the quests it still needs - staff, Summoner, Duriel, Travincal, Mephisto, Diablo - up to the act the rest of the party is in.
 
@@ -123,6 +154,10 @@ Diablo II 1.14d can't scale its window; stretching add-ons like cnc-ddraw rescal
 | `HostRotation` | true | Furthest-behind member hosts the games, everyone joins to catch it up |
 | `MakeWay` | true | Helpers right next to a leader that keeps failing to move step behind it for a few seconds (narrow walkways, doors) |
 | `ShareRunes` | true | Members hand each other runes someone needs for a runeword (see Sharing runes) |
+| `DangerCooldownGames` | 3 | A run the host went down in twice in one game is left to the others for this many of its next games. 0 = off |
+| `StallMinutes` | 12 | Nobody moved or made progress for this long: leave the game and start fresh. 0 = off |
+| `GameReport` | true | One "Game report" line per game, plus a row in `logs/party-report.csv` |
+| `Commands` | true | Take commands from `Party Command.bat` |
 | `Rush` | true | The party's teleporter rushes a far-behind member through the act bosses |
 | `RushWhenBehindActs` | 1 | How many acts behind (another difficulty = always) before rushing |
 | `RushStepMinutes` | 5 | Minutes per boss before a rush counts as stuck and the rush game ends. 0 = no limit |

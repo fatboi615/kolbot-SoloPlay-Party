@@ -51,6 +51,15 @@
     // members hand each other runes: one that somebody needs for a runeword (and its owner doesn't) is dropped in
     // town at the start of a game for the one who needs it
     ShareRunes: true,
+    // a run the host went down in twice in one game is left to the others for this many of the host's next games
+    // (someone else who needs it runs it with the host behind them; if nobody does, it's skipped). 0 = off
+    DangerCooldownGames: 3,
+    // nobody in the game has moved or made progress for this many minutes: leave it and start fresh. 0 = off
+    StallMinutes: 12,
+    // one line per game in the console and in logs/party-report.csv (time, runs, restarts, who was there)
+    GameReport: true,
+    // read commands from libs/SoloPlay/.soloplay/party/command.txt (end / skip <run> / unskip <run> / status)
+    Commands: true,
     LeaderLedScripts: true,
     LeaderPortals: true,
     LeaderWaits: true,
@@ -259,6 +268,8 @@
   let _resumeStep = 0;
   /** ...without redoing the scripts we already ran in this game */
   let _resumeRan = [];
+  /** ...and with the game report so far */
+  let _resumeReport = null;
   /** ...nor walking into the same death again: script -> times our scripts restarted during it in this game */
   let _resumeDied = {};
   let _hostCache = { tick: 0, value: "" };
@@ -385,7 +396,36 @@
     return {
       scripts: (data && data.scripts) || {},
       catchUpGames: (data && data.catchUpGames) || 0,
+      // runs we (as host) keep going down in: script -> host games left to stay out of it
+      avoid: (data && data.avoid) || {},
     };
+  };
+
+  /** runs the user switched off with the "skip" command (shared by the whole party) */
+  const controlPath = function () {
+    return DIR + "/control.json";
+  };
+  const readControl = function () {
+    let c = readJSON(controlPath());
+    return { skip: (c && Array.isArray(c.skip)) ? c.skip : [] };
+  };
+
+  /**
+   * A command the user dropped in command.txt (one line). The file is emptied once read.
+   * @returns {string[]} words, lower case
+   */
+  const takeCommand = function () {
+    if (!settings.Commands) return [];
+    const path = DIR + "/command.txt";
+    try {
+      if (!FileTools.exists(path)) return [];
+      let text = String(FileTools.readText(path) || "").replace(/[\r\n]+/g, " ").trim();
+      if (!text) return [];
+      FileTools.writeText(path, "");
+      return text.toLowerCase().split(/\s+/);
+    } catch (e) {
+      return [];
+    }
   };
 
   /** @param {{ scripts: Record<string, number>, catchUpGames: number }} data */
@@ -2241,6 +2281,45 @@
     }
   };
 
+  /** where we last saw anything change (see stallWatchdog) */
+  let _stall = { x: 0, y: 0, area: 0, sig: "", since: 0, fired: false };
+
+  /**
+   * Background worker: the safety net for stalls nobody thought of. If we haven't moved and nothing about the game
+   * (our step, the leader's step and position) has changed for StallMinutes, leave the game and start fresh.
+   */
+  const stallWatchdog = function () {
+    if (!settings.StallMinutes || _stall.fired || _rushDeadline || !me.ingame || !me.gameReady) return;
+    let sig = Party.state.step + "|" + Party.state.phase + "|" + Party.state.script + "|" + Party.state.running;
+    if (isFollower) {
+      let ls = Party.readGame(leader);
+      ls && (sig += "|" + ls.step + "|" + ls.phase);
+    }
+    // anyone else moving counts too (we may be standing still while they finish something)
+    members.forEach(function (m) {
+      if (m === myProfile) return;
+      let g = Party.readGame(m);
+      g && (sig += "|" + g.area + "|" + Math.round((g.x || 0) / 30) + "|" + Math.round((g.y || 0) / 30));
+    });
+    const moved = me.area !== _stall.area || getDistance(me.x, me.y, _stall.x, _stall.y) > 30;
+    if (moved || sig !== _stall.sig || !_stall.since) {
+      _stall = { x: me.x, y: me.y, area: me.area, sig: sig, since: Date.now(), fired: false };
+      return;
+    }
+    if (Date.now() - _stall.since < Time.minutes(settings.StallMinutes)) return;
+    _stall.fired = true;
+    log("Nothing has moved for " + settings.StallMinutes + " minutes (" + getAreaName(me.area)
+      + (Party.state.running ? ", " + Party.state.running : "") + ") - leaving this game to start fresh", true);
+    Object.assign(Party.state, { phase: isLeader ? "end" : "left", script: "", running: "", finishedGame: me.gamename || "" });
+    Party.writeGame();
+    _rushQuitAt = Date.now(); // rushWatchdog pulls the plug if the quit doesn't take
+    try {
+      scriptBroadcast("quit");
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const runAsRushee = function (rush, step) {
     const seqs = rushNeeds().filter(function (n) {
       return rushStepAct(n) < rush.targetAct;
@@ -2729,12 +2808,108 @@
     const toldSkip = [];
     Party.state.ranHere = ranHere.slice(0);
     Party.state.diedIn = diedIn;
+
+    // runs we keep going down in as host: stay out of them for a few games (kept in our stuck file)
+    let stuckData = Party.readStuck();
+    if (!_resumeStep && settings.DangerCooldownGames > 0) {
+      // a new game: one game off every cooldown
+      Object.keys(stuckData.avoid).forEach(function (k) {
+        stuckData.avoid[k] -= 1;
+        stuckData.avoid[k] <= 0 && delete stuckData.avoid[k];
+      });
+      writeStuck(stuckData);
+    }
+    /** @param {string} s - not ours to run for now (others who need it still can, with us behind them) */
+    const avoiding = function (s) {
+      return settings.DangerCooldownGames > 0 && (stuckData.avoid[s] || 0) > 0;
+    };
+    let userSkip = readControl().skip;
+    let endAsked = false;
+
+    // game report (kept in the game file so a mid-game restart doesn't lose it)
+    const report = (_resumeReport && typeof _resumeReport === "object")
+      ? _resumeReport
+      : { start: Date.now(), runs: [], restarts: 0, skipped: [] };
+    _resumeStep && (report.restarts += 1);
+    Party.state.report = report;
+    const writeReport = function (why) {
+      if (!settings.GameReport) return;
+      try {
+        const mins = Math.max(1, Math.round((Date.now() - report.start) / 60000));
+        const here = [myProfile].concat(Party.activeFollowers());
+        log("Game report: " + mins + " min, " + report.runs.length + " runs (" + (report.runs.join(", ") || "none") + ")"
+          + (report.skipped.length ? ", left out: " + report.skipped.join(", ") : "")
+          + ", host restarts: " + report.restarts + ", members: " + here.length + " - " + why, true);
+        const row = [
+          new Date().toISOString(), me.gamename || "", ["Normal", "Nightmare", "Hell"][me.diff] || "", myProfile, mins,
+          here.length, report.runs.length, report.restarts, report.runs.join(" "), report.skipped.join(" "), why,
+        ].join(",") + "\n";
+        const file = "logs/party-report.csv";
+        !FileTools.exists(file)
+          && FileTools.writeText(file, "time,game,difficulty,host,minutes,members,runs,host_restarts,run_list,left_out,ended\n");
+        FileTools.appendText(file, row);
+      } catch (e) {
+        // the report is a nicety - never let it break the end of a game
+      }
+    };
+
+    /** commands from command.txt, read between runs */
+    const handleCommands = function () {
+      const words = takeCommand();
+      if (!words.length) return;
+      const cmd = words[0];
+      const arg = words[1] || "";
+      const known = SoloIndex.scripts.indexOf(arg) > -1;
+      if (cmd === "end") {
+        endAsked = true;
+        log("Command: end - ending this game after the current run", true);
+      } else if (cmd === "skip" && known) {
+        let c = readControl();
+        c.skip.indexOf(arg) === -1 && c.skip.push(arg);
+        writeJSON(controlPath(), c);
+        userSkip = c.skip;
+        log("Command: skip " + arg + " - the party leaves it out until you send: unskip " + arg, true);
+      } else if (cmd === "unskip" && arg) {
+        let c = readControl();
+        c.skip = c.skip.filter(function (x) {
+          return x !== arg;
+        });
+        writeJSON(controlPath(), c);
+        userSkip = c.skip;
+        delete stuckData.avoid[arg];
+        writeStuck(stuckData);
+        log("Command: unskip " + arg + " - back on the list", true);
+      } else if (cmd === "status") {
+        log("Status: step " + step + (Party.state.script ? " (" + Party.state.script + ")" : "")
+          + " | skipping: " + (userSkip.join(", ") || "nothing")
+          + " | host staying out of: " + (Object.keys(stuckData.avoid).join(", ") || "nothing")
+          + " | with: " + (Party.activeFollowers().join(", ") || "nobody"), true);
+      } else {
+        log("Command not understood: " + words.join(" ") + " (use: end, skip <run>, unskip <run>, status)", true);
+      }
+    };
+
     /** @param {string} s @param {number} pass */
     const skipHere = function (s, pass) {
+      if (userSkip.indexOf(s) > -1) {
+        if (toldSkip.indexOf(s) === -1) {
+          toldSkip.push(s);
+          report.skipped.indexOf(s) === -1 && report.skipped.push(s);
+          log("Leaving out " + s + " (skip command)", true);
+        }
+        return true;
+      }
       if ((diedIn[s] || 0) >= 2) {
         if (toldSkip.indexOf(s) === -1) {
           toldSkip.push(s);
+          report.skipped.indexOf(s) === -1 && report.skipped.push(s);
           log("Skipping " + s + " for the rest of this game - went down in it " + diedIn[s] + " times", true);
+          if (settings.DangerCooldownGames > 0) {
+            stuckData.avoid[s] = settings.DangerCooldownGames;
+            writeStuck(stuckData);
+            log("Staying out of " + s + " as host for the next " + settings.DangerCooldownGames
+              + " games (someone else who needs it can still run it)", true);
+          }
         }
         return true;
       }
@@ -2818,7 +2993,16 @@
         for (let i = pointer; i < list.length; i++) {
           if (skipHere(list[i], pass)) continue;
           let who = [];
-          myNeeds.includes(list[i]) && who.push(myProfile);
+          // a run we keep going down in: don't lead it ourselves for now
+          if (myNeeds.includes(list[i])) {
+            if (!avoiding(list[i])) {
+              who.push(myProfile);
+            } else if (toldSkip.indexOf("avoid:" + list[i]) === -1) {
+              toldSkip.push("avoid:" + list[i]);
+              log("Not leading " + list[i] + " this game (went down in it twice recently, "
+                + stuckData.avoid[list[i]] + " more games)", true);
+            }
+          }
           for (let f in replies) {
             replies[f].includes(list[i]) && who.push(f);
           }
@@ -2849,7 +3033,10 @@
         Party.state.doneStep = step;
         ranHere.indexOf(script) === -1 && ranHere.push(script);
         Party.state.ranHere = ranHere.slice(0);
+        report.runs.push(script);
         Party.writeGame();
+        handleCommands();
+        endAsked && (stop = true);
 
         // 4. wait for (and help) everyone else that is running it
         assistUntilDone(step, needers, settings.SyncTimeout);
@@ -2864,6 +3051,7 @@
 
     Object.assign(Party.state, { phase: "end", script: "", needers: [], finishedGame: me.gamename || "" });
     Party.writeGame();
+    writeReport(endAsked ? "ended by command" : "finished the list");
     log("Leader finished the script list, ending game", true);
     // give followers a moment to see the end flag
     delay(2000);
@@ -3484,6 +3672,7 @@
     if (gameHost === myProfile && mine && mine.role === "leader" && sameGame(mine.game) && mine.step > 0) {
       _resumeStep = mine.step;
       _resumeRan = Array.isArray(mine.ranHere) ? mine.ranHere.slice(0) : [];
+      _resumeReport = mine.report || null;
       _resumeDied = mine.diedIn && typeof mine.diedIn === "object" ? Object.assign({}, mine.diedIn) : {};
       if (mine.phase === "run" && mine.script) {
         _resumeDied[mine.script] = (_resumeDied[mine.script] || 0) + 1;
@@ -3676,6 +3865,7 @@
         }
         isFollower && leaderWatchdog();
         rushWatchdog();
+        stallWatchdog();
         // no waiting from in here any more - the heartbeat runs inside delay(), which can be the middle of making
         // or taking a portal. The runner only waits at planned moments (see arrive / paceCheck hooks).
       } catch (e) {

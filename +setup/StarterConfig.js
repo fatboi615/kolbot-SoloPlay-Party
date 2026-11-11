@@ -16,7 +16,11 @@
     // Global Account Settings.
     GlobalAccount: "", // Set value for a global account. (MAX Characters 12 plus AccountSuffixLength) 
     AccountSuffixLength: 3, // Set Global Account value for random numbers at the end of the name. (Minimum suffix 3)
-    GlobalAccountPassword: "" // Set value for a global password for account generation.
+    GlobalAccountPassword: "", // Set value for a global password for account generation.
+
+    // When the account typed in the manager profile doesn't exist yet, create it with that name and password
+    // (and then the character, with the profile's character name). false = old behaviour.
+    MakeAccountFromProfile: true
   };
 
   module.exports = {

@@ -112,6 +112,28 @@
     ShareRunes: true,
 
     /**
+     * @desc - a run the host went down in twice in one game is left to the others for this many of its next games
+     *   (someone else who needs it runs it with the host behind them; if nobody does it is skipped). 0 = off
+     */
+    DangerCooldownGames: 3,
+
+    /**
+     * @desc - safety net: when nobody in the game has moved or made progress for this many minutes, leave the game
+     *   and start a fresh one. 0 = off
+     */
+    StallMinutes: 12,
+
+    /**
+     * @desc - one "Game report" line per game in the host's console and a row in d2bs/kolbot/logs/party-report.csv
+     */
+    GameReport: true,
+
+    /**
+     * @desc - take commands from Tools/PartyCommand/Party Command.bat (end, skip <run>, unskip <run>, status)
+     */
+    Commands: true,
+
+    /**
      * @desc - when there is no shared target, helpers only clear monsters this close to them (yards).
      *   Keep it small so they don't wander off from the person they are following.
      */

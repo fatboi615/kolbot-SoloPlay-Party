@@ -2508,13 +2508,17 @@
     trades.forEach(function (t, n) {
       (t.from === myProfile || t.to === myProfile) && mine.push({ t: t, key: id + ":" + n });
     });
-    if (!mine.length) return done();
+    if (!mine.length) {
+      done();
+      return;
+    }
 
     try {
       (!me.inTown || me.act !== 1) && Town.goToTown(1);
       Town.move("stash");
     } catch (e) {
-      return done();
+      done();
+      return;
     }
     /** @param {string} who @param {string} field @param {string} key @param {boolean} [near] */
     const theyAre = function (who, field, key, near) {

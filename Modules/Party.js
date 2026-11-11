@@ -1158,7 +1158,42 @@
    * @param {string} script
    * @returns {boolean} true if we talked to the npc
    */
+  /**
+   * Duriel: being there for the kill isn't enough - the quest (and the way to act 3) needs Tyrael in the chamber
+   * behind the lair and then Jerhyn. Without this a member who followed the leader in was left behind in act 2.
+   * @returns {boolean} true if we did something
+   */
+  const finishDuriel = function () {
+    try {
+      const id = sdk.quest.id.TheSevenTombs;
+      if (Misc.checkQuest(id, sdk.quest.states.Completed)) return false;
+      if (!Misc.checkQuest(id, 3)) {
+        // back into the lair through a party portal if we already left
+        !me.inArea(sdk.areas.DurielsLair) && me.inTown && Pather.usePortal(sdk.areas.DurielsLair, null);
+        if (!me.inArea(sdk.areas.DurielsLair)) return false;
+        let dury = Game.getMonster(sdk.monsters.Duriel);
+        if (dury && !dury.dead) return false;
+        me.overhead("Party: talking to Tyrael");
+        Quest.tyraelTomb();
+      }
+      for (let i = 0; i < 3 && Misc.checkQuest(id, 3) && !Misc.checkQuest(id, 4); i++) {
+        Town.goToTown(2);
+        Town.move("palace");
+        Town.npcInteract("jerhyn");
+        me.cancel();
+        delay(500);
+      }
+      log(me.name + " finished the Duriel quest (Tyrael, Jerhyn)", true);
+      return true;
+    } catch (e) {
+      console.warn("Party :: finishing the Duriel quest failed - " + (e.message || e));
+      me.cancel();
+      return false;
+    }
+  };
+
   const collectReward = function (script) {
+    if (script === "duriel") return finishDuriel();
     let info = rewardTalks[script];
     if (!info) return false;
     try {
@@ -3222,7 +3257,7 @@
             // the leader did the work - if all that's left is talking to an npc, just do that
             let stillNeed = questStillNotDone(ls.script);
             if (stillNeed && collectReward(ls.script)) {
-              stillNeed = questNotDone(ls.script);
+              stillNeed = questStillNotDone(ls.script);
             }
             // still need it but the boss already died in this game (we were in town, too far...)? running it
             // again only walks the whole area for nothing - try again next game

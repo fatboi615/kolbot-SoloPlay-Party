@@ -69,6 +69,12 @@
     HostRejoinWait: 75,
 
     /**
+     * @desc - in town with no waypoint to where the one you follow is: wait this many seconds for a party portal
+     *   before walking there (walking can be a long way round, or a closed one like Lut Gholein's palace)
+     */
+    PortalWait: 60,
+
+    /**
      * @desc - a member that hasn't checked in for this many seconds is treated as offline
      *   (the leader won't wait for it and won't lower the difficulty for it)
      */

@@ -40,6 +40,8 @@
     // the host chickens / dies / drops: the others wait this long in town for it to come back into the same game
     // (it rejoins and carries on from the next step) instead of everyone starting over. 0 = leave right away
     HostRejoinWait: 75,
+    // in town with no waypoint to where the one we follow is: wait this long for a party portal before walking
+    PortalWait: 60,
     StaleAfter: 300,
     SyncDifficulty: true,
     AssistRange: 12,
@@ -1541,7 +1543,11 @@
    * @param {{ area: number, owner: string, tick: number } | null} [rally] - their meeting point (where their portal is)
    * @returns {boolean}
    */
+  /** waiting in town for a party portal to this area since (see travelTo) */
+  let _portalWait = { area: 0, since: 0 };
+
   const travelTo = function (area, name, rally) {
+    if (_portalWait.area !== area) _portalWait = { area: area, since: 0 };
     let fail = travelFails[area];
     if (fail && fail.fails >= 3 && getTickCount() - fail.tick < Time.seconds(30)) {
       // stop hammering a route that keeps failing, wait in town for a bit
@@ -1649,12 +1655,26 @@
         }
       }
 
+      // in their act's town with no portal there and no waypoint to it: walking can mean a long way round, or one
+      // that's closed to us (Lut Gholein's palace before Jerhyn lets you in - two members walked into the gate for
+      // 13 minutes and never saw the portal that went up meanwhile). Wait here for a portal first.
+      if (!ok && me.inTown && me.act === areaAct && !haveWp && !nextDoor && !me.inArea(area)) {
+        !_portalWait.since && (_portalWait.since = getTickCount());
+        if (getTickCount() - _portalWait.since < Time.seconds(settings.PortalWait)) {
+          me.overhead("Party: waiting in town for a portal to " + getAreaName(area));
+          Town.move("portalspot");
+          delay(1000);
+          return false;
+        }
+      }
+
       if (!ok && !me.inArea(area)) {
         Pather.journeyTo(area);
       }
     } catch (e) {
       console.warn("Party :: travel to " + getAreaName(area) + " failed - " + (e.message || e));
     }
+    me.inArea(area) && (_portalWait = { area: 0, since: 0 });
 
     ok = me.inArea(area);
 

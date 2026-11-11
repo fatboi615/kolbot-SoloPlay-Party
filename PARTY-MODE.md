@@ -99,6 +99,7 @@ Diablo II 1.14d can't scale its window; stretching add-ons like cnc-ddraw rescal
 | `SyncTimeout` | 15 | Minutes the party waits on a slow member before moving on |
 | `LeaderLostTimeout` | 10 | Seconds before followers leave after the leader disappears |
 | `HostRejoinWait` | 75 | When the host chickens, dies or drops, the others wait this many seconds in town while it goes back into the same game and carries on. 0 = leave right away |
+| `PortalWait` | 60 | In town with no waypoint to where the one you follow is: wait this long for a party portal before walking |
 | `StaleAfter` | 300 | Seconds before a silent member counts as offline |
 | `SyncDifficulty` | true | Make games in the lowest difficulty any member needs |
 | `LeaderLedScripts` | true | Shared scripts: follower fights alongside the leader instead of running its own copy |

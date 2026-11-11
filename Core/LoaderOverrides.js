@@ -167,6 +167,20 @@ Loader.runIndexedScript = function (script, index) {
     }
   }
 
+  // party member playing solo to catch up on a quest: had our go (or the game ran long) - back to the party
+  try {
+    const catchUp = require("../Modules/Party");
+    if (catchUp.catchUpShouldEnd(script)) {
+      myPrint("solo catch-up game is done - leaving");
+      catchUp.afterCatchUpGame();
+      scriptBroadcast("quit");
+      delay(5000);
+      return "endrun";
+    }
+  } catch (e) {
+    console.warn("catch-up check failed - " + (e.message || e));
+  }
+
   if (me.sorceress && me.hell && script === "bloodraven" && me.charlvl < 68) {
     console.info(false, "End-run, we are not ready to keep pushing yet");
       

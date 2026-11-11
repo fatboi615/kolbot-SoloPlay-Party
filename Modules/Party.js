@@ -1375,6 +1375,23 @@
     return false;
   };
 
+  /**
+   * Solo catch-up game: called after every script. A solo game runs the whole script list and every script
+   * stretches the game time, so it could go on for 2+ hours. Once we've had our go at a script we're stuck on
+   * (or 30 minutes passed) the game is over - afterCatchUpGame() counts it and we go back to the party.
+   * @param {string} script the script that just finished
+   * @returns {boolean}
+   */
+  Party.catchUpShouldEnd = function (script) {
+    try {
+      if (!Party.inCatchUp()) return false;
+      if (Party.stuckScripts().indexOf(script) > -1) return true;
+      return getTickCount() - me.gamestarttime > 30 * 60 * 1000;
+    } catch (e) {
+      return false;
+    }
+  };
+
   Party.afterCatchUpGame = function () {
     if (!enabled || isLeader) return;
     let data = Party.readStuck();

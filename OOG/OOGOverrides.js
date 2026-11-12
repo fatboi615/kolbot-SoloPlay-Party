@@ -835,6 +835,34 @@ const LocationAction = {
     }
   };
 
+  /**
+   * Password of this profile as the manager wrote it to d2bs.ini (UTF-16 file, so NUL bytes are stripped).
+   * @returns {string} empty when it can't be read
+   */
+  Starter.profilePassword = function () {
+    try {
+      const name = me.profile;
+      let raw = "";
+      for (let path of ["../d2bs.ini", "d2bs.ini", "../../d2bs.ini"]) {
+        if (!FileTools.exists(path)) continue;
+        raw = String(FileTools.readText(path) || "").replace(/[\u0000\ufeff\u00ff\u00fe]/g, "");
+        if (raw.indexOf("[" + name + "]") > -1) break;
+        raw = "";
+      }
+      if (!raw) return "";
+      let at = raw.indexOf("[" + name + "]");
+      let lines = raw.substring(at + name.length + 2).split(/\r?\n/);
+      for (let line of lines) {
+        if (line.charAt(0) === "[") break;
+        if (line.toLowerCase().indexOf("password=") === 0) return line.substring(9);
+      }
+    } catch (e) {
+      console.warn("couldn't read profile password - " + (e.message || e));
+    }
+
+    return "";
+  };
+
   Starter.accountExists = false;
 
   /**
@@ -871,6 +899,10 @@ const LocationAction = {
       case getLocaleString(5208): // Invalid account
         // the account in the manager profile doesn't exist yet: make it with that name and password (the
         // character is made right after, from the profile's character name) instead of throwing the name away
+        if (!Starter.profileInfo.password) {
+          // the manager doesn't hand the password to scripts, but it writes it to d2bs.ini under the profile name
+          Starter.profileInfo.password = Starter.profilePassword();
+        }
         if (Starter.Config.MakeAccountFromProfile !== false && !Starter.triedProfileAccount
           && Starter.profileInfo.account && Starter.profileInfo.password) {
           Starter.triedProfileAccount = true;
@@ -896,12 +928,15 @@ const LocationAction = {
 
           break;
         }
+        // never clear the profile and restart here: that reconnects to Battle.net over and over (IP temp-ban)
         D2Bot.updateStatus("Invalid Account Name");
-        D2Bot.printToConsole("Invalid Account Name :: " + Starter.profileInfo.account);
-        Starter.profileInfo.account = "";
-        Starter.profileInfo.password = "";
-        D2Bot.setProfile(Starter.profileInfo.account, Starter.profileInfo.password);
-        D2Bot.restart(true);
+        D2Bot.printToConsole(
+          "Invalid Account Name :: " + Starter.profileInfo.account
+          + (Starter.triedProfileAccount ? "" : " (couldn't read the profile password to create it)")
+          + " - stopping this profile so it doesn't keep reconnecting",
+          sdk.colors.D2Bot.Red
+        );
+        D2Bot.stop();
 
         break;
       case getLocaleString(5249): // Unable to create account

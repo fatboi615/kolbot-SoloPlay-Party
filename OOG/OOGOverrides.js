@@ -836,25 +836,19 @@ const LocationAction = {
   };
 
   /**
-   * Password of this profile as the manager wrote it to d2bs.ini (UTF-16 file, so NUL bytes are stripped).
+   * Password of this profile from data/profile-logins.txt (copied from the manager's d2bs.ini).
    * @returns {string} empty when it can't be read
    */
   Starter.profilePassword = function () {
     try {
-      const name = me.profile;
-      let raw = "";
-      for (let path of ["../d2bs.ini", "d2bs.ini", "../../d2bs.ini"]) {
-        if (!FileTools.exists(path)) continue;
-        raw = String(FileTools.readText(path) || "").replace(/[\u0000\ufeff\u00ff\u00fe]/g, "");
-        if (raw.indexOf("[" + name + "]") > -1) break;
-        raw = "";
-      }
-      if (!raw) return "";
-      let at = raw.indexOf("[" + name + "]");
-      let lines = raw.substring(at + name.length + 2).split(/\r?\n/);
+      // D2BS scripts can't read outside the kolbot folder (so not d2bs.ini): data/profile-logins.txt holds
+      // one "profile<TAB>account<TAB>password" line per manager profile
+      const file = "data/profile-logins.txt";
+      if (!FileTools.exists(file)) return "";
+      let lines = String(FileTools.readText(file) || "").split(/\r?\n/);
       for (let line of lines) {
-        if (line.charAt(0) === "[") break;
-        if (line.toLowerCase().indexOf("password=") === 0) return line.substring(9);
+        let parts = line.split("\t");
+        if (parts.length >= 3 && parts[0] === me.profile) return parts.slice(2).join("\t");
       }
     } catch (e) {
       console.warn("couldn't read profile password - " + (e.message || e));
@@ -900,7 +894,7 @@ const LocationAction = {
         // the account in the manager profile doesn't exist yet: make it with that name and password (the
         // character is made right after, from the profile's character name) instead of throwing the name away
         if (!Starter.profileInfo.password) {
-          // the manager doesn't hand the password to scripts, but it writes it to d2bs.ini under the profile name
+          // the manager doesn't hand the password to scripts: read it from data/profile-logins.txt
           Starter.profileInfo.password = Starter.profilePassword();
         }
         if (Starter.Config.MakeAccountFromProfile !== false && !Starter.triedProfileAccount
@@ -932,7 +926,7 @@ const LocationAction = {
         D2Bot.updateStatus("Invalid Account Name");
         D2Bot.printToConsole(
           "Invalid Account Name :: " + Starter.profileInfo.account
-          + (Starter.triedProfileAccount ? "" : " (couldn't read the profile password to create it)")
+          + (Starter.triedProfileAccount ? "" : " (no password for this profile in data/profile-logins.txt, so it can't be created)")
           + " - stopping this profile so it doesn't keep reconnecting",
           sdk.colors.D2Bot.Red
         );

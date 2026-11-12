@@ -3949,8 +3949,11 @@
     // no town portals left: kolbot gives up and quits the game when there are other players around.
     // In party mode try a party member's portal, the waypoint, or walk back instead.
     const originalGoToTown = Town.goToTown;
+    let townFallbackBusy = false;
     Town.goToTown = function () {
-      if (!me.inTown && !me.dead && !me.getTpTool()) {
+      // the walk back can itself ask for town (low life, no portals...): don't start another fallback inside one
+      if (!townFallbackBusy && !me.inTown && !me.dead && !me.getTpTool()) {
+        townFallbackBusy = true;
         try {
           me.overhead("Party: out of town portals, finding another way to town");
           console.log("ÿc8[Party]ÿc0 out of town portals in " + getAreaName(me.area) + " - using another way to town");
@@ -3965,6 +3968,8 @@
           !me.inTown && Pather.journeyTo(town);
         } catch (e) {
           console.warn("Party :: town fallback failed - " + (e.message || e));
+        } finally {
+          townFallbackBusy = false;
         }
       }
       return originalGoToTown.apply(this, arguments);

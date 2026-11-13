@@ -720,12 +720,7 @@ const LocationAction = {
     try {
       // make battlenet accounts/characters
       if (Starter.BNET) {
-        let slotWait = Starter.loginSlotDelay();
-        if (slotWait > 0) {
-          D2Bot.updateStatus("Waiting for login slot (" + Math.round(slotWait / 1000) + "s)");
-          console.log("login queue - waiting " + Math.round(slotWait / 1000) + "s so the group doesn't connect all at once");
-        }
-        ControlAction.timeoutDelay("Login Delay", slotWait + Starter.Config.DelayBeforeLogin * 1e3);
+        ControlAction.timeoutDelay("Login Delay", Starter.Config.DelayBeforeLogin * 1e3);
         D2Bot.updateStatus("Logging in");
         // existing account
         if (Starter.profileInfo.account !== "") {
@@ -860,32 +855,6 @@ const LocationAction = {
     }
 
     return "";
-  };
-
-  /**
-   * Login queue: every profile on this machine takes the next free slot in a shared file, spaced a
-   * little apart, so starting a whole group at once doesn't hammer Battle.net with connects (IP temp-ban,
-   * "realm down"). A profile that restarts later when nobody else is logging in just goes straight in.
-   * @returns {number} milliseconds to wait before connecting
-   */
-  Starter.loginSlotDelay = function () {
-    try {
-      const file = "libs/SoloPlay/.soloplay/party/login-queue.txt";
-      const gap = (Starter.Config.LoginGapSeconds || 35) * 1000;
-      delay(rand(0, 3000)); // two profiles started in the same moment rarely read the file together
-      const now = new Date().getTime();
-      let next = 0;
-      if (FileTools.exists(file)) {
-        next = parseInt(String(FileTools.readText(file) || "").replace(/\s/g, ""), 10) || 0;
-      }
-      const mine = Math.max(now, next);
-      FileTools.writeText(file, String(mine + gap + rand(0, 15000)));
-      return Math.min(Math.max(0, mine - now), 20 * 60 * 1000);
-    } catch (e) {
-      console.warn("login queue failed - " + (e.message || e));
-    }
-
-    return 0;
   };
 
   Starter.accountExists = false;
